@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Database
+data/
+*.db
+
+# Environment
+.env
+
+# Logs
+logs/
+
+# Backups
+backups/
+
+# Exports
+exports/
+
+# Uploads
+uploads/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.env.docker
+
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Runtime
+*.pid
+bot.log
+bot_test.log
+
+# Windows Zone Identifier files
+*:Zone.Identifier
+
+# Temp files
+Untitled-1

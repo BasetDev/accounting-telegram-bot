@@ -1,0 +1,10 @@
+# Hesab Telegram Accounting Bot Dependencies
+SQLAlchemy>=2.0.0,<3.0.0
+aiogram>=3.10.0,<4.0.0
+jdatetime>=5.0.0,<6.0.0
+openpyxl>=3.1.0,<4.0.0
+reportlab>=4.1.0,<5.0.0
+python-dotenv>=1.0.0,<2.0.0
+pytz>=2024.1
+persian-tools>=0.0.10
+aiofiles>=24.1.0
