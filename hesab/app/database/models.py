@@ -1,7 +1,7 @@
 """Database models for the accounting bot."""
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Generator
 from sqlalchemy import create_engine, Column, Integer, BigInteger, Float, String, Text, DateTime, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
@@ -10,6 +10,11 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 
 Base = declarative_base()
+
+
+def _utcnow() -> datetime:
+    """Return current UTC time (timezone-aware)."""
+    return datetime.now(timezone.utc)
 
 
 class User(Base):
@@ -23,8 +28,8 @@ class User(Base):
     last_name = Column(String(255), nullable=True)
     is_admin = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     transactions = relationship("Transaction", back_populates="user")
     customers = relationship("Customer", back_populates="user")
@@ -70,7 +75,7 @@ class Transaction(Base):
     bank_name = Column(String(255), nullable=True)
 
     # Internal UTC timestamp
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     
     is_settled = Column(Boolean, default=False)
     settled_at = Column(DateTime, nullable=True)
@@ -95,8 +100,8 @@ class Customer(Base):
     total_debt = Column(Float, default=0.0)
     total_receivable = Column(Float, default=0.0)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     user = relationship("User", back_populates="customers")
     transactions = relationship("Transaction", back_populates="customer")
@@ -120,7 +125,7 @@ class Reminder(Base):
     is_sent = Column(Boolean, default=False)
     sent_at = Column(DateTime, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
 
 class CardInfo(Base):
@@ -134,8 +139,8 @@ class CardInfo(Base):
     card_number = Column(String(16), nullable=True)  # Exactly 16 digits
     sheba = Column(String(26), nullable=True)  # IR + 24 digits
     bank_name = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     user = relationship("User", back_populates="card_info")
     customer = relationship("Customer")
@@ -153,7 +158,7 @@ class Backup(Base):
     jalali_date = Column(String(20), nullable=False)
     jalali_time = Column(String(20), nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
 
 class Payment(Base):
@@ -173,7 +178,7 @@ class Payment(Base):
     jalali_time = Column(String(20), nullable=False)
     jalali_full = Column(String(50), nullable=False)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     transaction = relationship("Transaction", back_populates="payments")
     user = relationship("User")

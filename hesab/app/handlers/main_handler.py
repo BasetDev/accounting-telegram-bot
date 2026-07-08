@@ -701,7 +701,7 @@ async def debt_start(message: Message, state: FSMContext):
 @router.callback_query(F.data == "debt_register")
 async def debt_register_from_submenu(callback: CallbackQuery, state: FSMContext):
     """Handle 'register new debt' from submenu - show category selection."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     await state.set_state(DebtForm.category)
     await callback.message.answer(DEBT_CATEGORY_PROMPT, reply_markup=debt_category_keyboard())
     await safe_callback_answer(callback)
@@ -1048,7 +1048,10 @@ async def debt_sheba_select(message: Message, state: FSMContext):
                 selected_card = card
                 break
         if selected_card:
-            await state.update_data(sheba=f"IR{selected_card.sheba}")
+            sheba_val = selected_card.sheba
+            if sheba_val and not sheba_val.upper().startswith("IR"):
+                sheba_val = f"IR{sheba_val}"
+            await state.update_data(sheba=sheba_val)
             # Move to bank name selection
             cards = CardInfoRepository.get_by_user(session, user.id)
             bank_names = list({c.bank_name for c in cards if c.bank_name})
@@ -1269,7 +1272,7 @@ async def receivable_start(message: Message, state: FSMContext):
 @router.callback_query(F.data == "receivable_register")
 async def receivable_register_from_submenu(callback: CallbackQuery, state: FSMContext):
     """Handle 'register new receivable' from submenu - show category selection."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     await state.set_state(ReceivableForm.category)
     await callback.message.answer(RECEIVABLE_CATEGORY_PROMPT, reply_markup=receivable_category_keyboard())
     await safe_callback_answer(callback)
@@ -1615,7 +1618,10 @@ async def receivable_sheba_select(message: Message, state: FSMContext):
                 selected_card = card
                 break
         if selected_card:
-            await state.update_data(sheba=f"IR{selected_card.sheba}")
+            sheba_val = selected_card.sheba
+            if sheba_val and not sheba_val.upper().startswith("IR"):
+                sheba_val = f"IR{sheba_val}"
+            await state.update_data(sheba=sheba_val)
             # Move to bank name selection
             cards = CardInfoRepository.get_by_user(session, user.id)
             bank_names = list({c.bank_name for c in cards if c.bank_name})
@@ -2528,8 +2534,11 @@ def _build_customer_detail_text(group: dict, session=None) -> str:
     return text
 
 
-def _build_txn_list_text(txns: list, txn_type: str, title: str, session=None) -> str:
-    """Build formatted text for a list of debt/receivable transactions."""
+def _build_txn_list_text(txns: list, txn_type: str, title: str, session=None) -> tuple:
+    """Build formatted text for a list of debt/receivable transactions.
+    
+    Returns: (lines, total, total_remaining, remaining_map) or None if empty.
+    """
     type_label = "بدهی" if txn_type == "debt" else "طلب"
     type_emoji = "📋" if txn_type == "debt" else "📌"
 
@@ -2620,6 +2629,7 @@ async def _send_filtered_list(message: Message, txns: list, txn_type: str,
 # --- Grouped receivable display ---
 
 # In-memory storage for customer groups (keyed by a unique session key)
+_RECV_CACHE_MAX = 100
 _recv_groups_cache: dict = {}
 _recv_groups_lock = asyncio.Lock()
 
@@ -2630,6 +2640,14 @@ _debt_groups_lock = asyncio.Lock()
 # In-memory storage for card groups (grouped by customer/name)
 _card_groups_cache: dict = {}
 _card_groups_lock = asyncio.Lock()
+
+
+def _evict_cache(cache: dict, max_size: int = _RECV_CACHE_MAX):
+    """Evict oldest entries from cache if it exceeds max size."""
+    if len(cache) > max_size:
+        keys_to_remove = list(cache.keys())[:len(cache) - max_size]
+        for k in keys_to_remove:
+            del cache[k]
 
 
 async def _send_grouped_receivable_list(message: Message, txns: list, title: str,
@@ -2648,6 +2666,7 @@ async def _send_grouped_receivable_list(message: Message, txns: list, title: str
     if cache_key:
         async with _recv_groups_lock:
             _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_recv_groups_cache)
 
     total_amount = sum(g["total"] for g in groups)
     total_remaining = sum(g["remaining"] for g in groups)
@@ -2697,6 +2716,7 @@ async def _send_settled_customer_list(message: Message, txns: list, title: str,
     if cache_key:
         async with _recv_groups_lock:
             _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_recv_groups_cache)
 
     total_amount = sum(g["total"] for g in groups)
     total_items = sum(g["count"] for g in groups)
@@ -2747,6 +2767,7 @@ async def _send_grouped_customer_pay_list(message: Message, txns: list, session=
     cache_key = f"recv_pay_cust_{id(message)}"
     async with _recv_groups_lock:
         _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
+        _evict_cache(_recv_groups_cache)
 
     active_groups = [g for g in groups if g["remaining"] > 0]
     total_remaining = sum(g["remaining"] for g in active_groups)
@@ -2853,6 +2874,7 @@ async def _send_grouped_customer_debt_list(message: Message, txns: list, session
     cache_key = f"debt_pay_cust_{id(message)}"
     async with _recv_groups_lock:
         _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
+        _evict_cache(_recv_groups_cache)
 
     active_groups = [g for g in groups if g["remaining"] > 0]
     total_remaining = sum(g["remaining"] for g in active_groups)
@@ -2963,6 +2985,7 @@ async def _send_grouped_debt_list(message: Message, txns: list, title: str,
     if cache_key:
         async with _debt_groups_lock:
             _debt_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_debt_groups_cache)
 
     total_amount = sum(g["total"] for g in groups)
     total_remaining = sum(g["remaining"] for g in groups)
@@ -3007,7 +3030,7 @@ async def debt_menu(message: Message):
 async def debt_active_list(callback: CallbackQuery):
     """Level 1: Show active debts grouped by customer overview."""
     try:
-        await callback.message.delete()
+        await safe_delete(callback.message)
     except Exception:
         pass
     session = get_session()
@@ -3026,6 +3049,7 @@ async def debt_active_list(callback: CallbackQuery):
         cache_key = f"debt_active_{user.id}"
         async with _debt_groups_lock:
             _debt_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_debt_groups_cache)
 
         total_amount = sum(g["total"] for g in groups)
         total_remaining = sum(g["remaining"] for g in groups)
@@ -3075,7 +3099,7 @@ async def debt_active_list(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_overdue")
 async def debt_overdue_list(callback: CallbackQuery):
     """Show overdue debts."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -3096,7 +3120,7 @@ async def debt_overdue_list(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_settled")
 async def debt_settled_list(callback: CallbackQuery):
     """Show settled debts."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -3116,7 +3140,7 @@ async def debt_settled_list(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_due_today")
 async def debt_due_today_list(callback: CallbackQuery):
     """Show debts due today."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -3137,7 +3161,7 @@ async def debt_due_today_list(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_due_week")
 async def debt_due_week_list(callback: CallbackQuery):
     """Show debts due this week."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -3159,7 +3183,7 @@ async def debt_due_week_list(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_all")
 async def debt_all_list(callback: CallbackQuery):
     """Show all debts."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -3220,7 +3244,7 @@ async def debt_all_cat_selected(callback: CallbackQuery):
                 await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
                 return
             txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
-            await callback.message.delete()
+            await safe_delete(callback.message)
             cache_key = f"debt_all_{user.id}"
             await _send_grouped_debt_list(
                 callback.message, txns, DEBT_ALL,
@@ -3241,7 +3265,7 @@ async def debt_all_cat_selected(callback: CallbackQuery):
                 return
             txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
             filtered = _filter_by_category(txns, category=category)
-            await callback.message.delete()
+            await safe_delete(callback.message)
             cache_key = f"debt_all_{user.id}_{category}"
             await _send_grouped_debt_list(
                 callback.message, filtered, f"{DEBT_ALL} ({category})",
@@ -3288,7 +3312,7 @@ async def debt_all_sub_selected(callback: CallbackQuery):
                     break
             txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await callback.message.delete()
+        await safe_delete(callback.message)
         title = f"{DEBT_ALL} ({subcategory})" if subcategory != "all" else DEBT_ALL
         cache_key = f"debt_all_{user.id}_{subcategory}"
         await _send_grouped_debt_list(
@@ -3328,7 +3352,7 @@ async def debt_settled_cat_selected(callback: CallbackQuery):
                 await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
                 return
             txns = TransactionRepository.get_settled(session, user.id, "debt")
-            await callback.message.delete()
+            await safe_delete(callback.message)
             await _send_filtered_list(callback.message, txns, "debt", DEBT_SETTLED, DEBT_SETTLED_EMPTY, debt_list_keyboard, session)
         finally:
             session.close()
@@ -3345,7 +3369,7 @@ async def debt_settled_cat_selected(callback: CallbackQuery):
                 return
             txns = TransactionRepository.get_settled(session, user.id, "debt")
             filtered = _filter_by_category(txns, category=category)
-            await callback.message.delete()
+            await safe_delete(callback.message)
             await _send_filtered_list(callback.message, filtered, "debt", f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, debt_list_keyboard, session)
         finally:
             session.close()
@@ -3388,7 +3412,7 @@ async def debt_settled_sub_selected(callback: CallbackQuery):
                     break
             txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await callback.message.delete()
+        await safe_delete(callback.message)
         title = f"{DEBT_SETTLED} ({subcategory})" if subcategory != "all" else DEBT_SETTLED
         await _send_filtered_list(callback.message, txns, "debt", title, DEBT_SETTLED_EMPTY, debt_list_keyboard, session)
     finally:
@@ -3519,7 +3543,7 @@ async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "debt_reports")
 async def debt_reports(callback: CallbackQuery):
     """Show debt summary report."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -4015,7 +4039,7 @@ async def receivable_menu(message: Message):
 async def receivable_active_list(callback: CallbackQuery):
     """Level 1: Show active receivables grouped by customer overview."""
     try:
-        await callback.message.delete()
+        await safe_delete(callback.message)
     except Exception:
         pass
     session = get_session()
@@ -4034,6 +4058,7 @@ async def receivable_active_list(callback: CallbackQuery):
         cache_key = f"recv_active_{user.id}"
         async with _recv_groups_lock:
             _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_recv_groups_cache)
 
         total_amount = sum(g["total"] for g in groups)
         total_remaining = sum(g["remaining"] for g in groups)
@@ -4083,7 +4108,7 @@ async def receivable_active_list(callback: CallbackQuery):
 @router.callback_query(F.data == "receivable_overdue")
 async def receivable_overdue_list(callback: CallbackQuery):
     """Show overdue receivables grouped by customer."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -4105,7 +4130,7 @@ async def receivable_overdue_list(callback: CallbackQuery):
 @router.callback_query(F.data == "receivable_settled")
 async def receivable_settled_list(callback: CallbackQuery):
     """Show settled receivables grouped by customer."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -4126,7 +4151,7 @@ async def receivable_settled_list(callback: CallbackQuery):
 @router.callback_query(F.data == "receivable_due_today")
 async def receivable_due_today_list(callback: CallbackQuery):
     """Show receivables due today grouped by customer."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -4148,7 +4173,7 @@ async def receivable_due_today_list(callback: CallbackQuery):
 @router.callback_query(F.data == "receivable_due_week")
 async def receivable_due_week_list(callback: CallbackQuery):
     """Show receivables due this week grouped by customer."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -4683,7 +4708,7 @@ async def recv_pay_customer_start(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "receivable_all")
 async def receivable_all_list(callback: CallbackQuery):
     """Show all receivables."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -4731,7 +4756,7 @@ async def receivable_all_cat_selected(callback: CallbackQuery):
                 await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
                 return
             txns = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=50)
-            await callback.message.delete()
+            await safe_delete(callback.message)
             cache_key = f"recv_all_{user.id}"
             await _send_grouped_receivable_list(callback.message, txns, RECEIVABLE_ALL, RECEIVABLE_EMPTY, session, cache_key)
         finally:
@@ -4749,7 +4774,7 @@ async def receivable_all_cat_selected(callback: CallbackQuery):
                 return
             txns = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=50)
             filtered = _filter_by_category(txns, category=category)
-            await callback.message.delete()
+            await safe_delete(callback.message)
             cache_key = f"recv_all_{user.id}_{category}"
             await _send_grouped_receivable_list(callback.message, filtered, f"{RECEIVABLE_ALL} ({category})", RECEIVABLE_EMPTY, session, cache_key)
         finally:
@@ -4793,7 +4818,7 @@ async def receivable_all_sub_selected(callback: CallbackQuery):
                     break
             txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await callback.message.delete()
+        await safe_delete(callback.message)
         title = f"{RECEIVABLE_ALL} ({subcategory})" if subcategory != "all" else RECEIVABLE_ALL
         cache_key = f"recv_all_{user.id}_{subcategory}"
         await _send_grouped_receivable_list(callback.message, txns, title, RECEIVABLE_EMPTY, session, cache_key)
@@ -4830,7 +4855,7 @@ async def receivable_settled_cat_selected(callback: CallbackQuery):
                 await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
                 return
             txns = TransactionRepository.get_with_payments(session, user.id, "receivable")
-            await callback.message.delete()
+            await safe_delete(callback.message)
             cache_key = f"recv_settled_{user.id}"
             await _send_settled_customer_list(callback.message, txns, RECEIVABLE_SETTLED, RECEIVABLE_SETTLED_EMPTY, session, cache_key)
         finally:
@@ -4848,7 +4873,7 @@ async def receivable_settled_cat_selected(callback: CallbackQuery):
                 return
             txns = TransactionRepository.get_with_payments(session, user.id, "receivable")
             filtered = _filter_by_category(txns, category=category)
-            await callback.message.delete()
+            await safe_delete(callback.message)
             cache_key = f"recv_settled_{user.id}_{category}"
             await _send_settled_customer_list(callback.message, filtered, f"{RECEIVABLE_SETTLED} ({category})", RECEIVABLE_SETTLED_EMPTY, session, cache_key)
         finally:
@@ -4892,7 +4917,7 @@ async def receivable_settled_sub_selected(callback: CallbackQuery):
                     break
             txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await callback.message.delete()
+        await safe_delete(callback.message)
         title = f"{RECEIVABLE_SETTLED} ({subcategory})" if subcategory != "all" else RECEIVABLE_SETTLED
         cache_key = f"recv_settled_{user.id}_{subcategory}"
         await _send_settled_customer_list(callback.message, txns, title, RECEIVABLE_SETTLED_EMPTY, session, cache_key)
@@ -5334,7 +5359,7 @@ async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMCon
 @router.callback_query(F.data == "receivable_reports")
 async def receivable_reports(callback: CallbackQuery):
     """Show receivable summary report."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -5411,7 +5436,7 @@ async def receivable_reports(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_pay")
 async def debt_pay_start(callback: CallbackQuery, state: FSMContext):
     """Start pay debt flow - show active debts for selection."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -5435,7 +5460,7 @@ async def debt_pay_start(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "receivable_receive")
 async def receivable_receive_start(callback: CallbackQuery, state: FSMContext):
     """Start receive receivable flow - show active receivables for selection."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     session = get_session()
     try:
         user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -6654,7 +6679,7 @@ async def handle_export(callback: CallbackQuery):
             document,
             caption=f"📊 گزارش تراکنش‌های مالی - {get_jalali_date()} ساعت {get_jalali_time()}"
         )
-        await callback.message.delete()
+        await safe_delete(callback.message)
         
     except Exception as e:
         logger.error(f"Export error: {e}")
@@ -7243,7 +7268,7 @@ async def card_info_menu(message: Message):
 @router.callback_query(F.data == "card_register")
 async def card_register_from_submenu(callback: CallbackQuery, state: FSMContext):
     """Handle 'register new card' from submenu."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     await state.set_state(CardForm.name_choice)
     await callback.message.answer(CARD_NAME_CHOICE, reply_markup=card_name_choice_keyboard())
     await safe_callback_answer(callback)
@@ -7272,6 +7297,7 @@ async def card_all_callback(callback: CallbackQuery):
         cache_key = f"c{user.id}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[cache_key] = {g["name"]: g for g in groups}
+            _evict_cache(_card_groups_cache)
 
         # Build summary text
         text = _build_card_group_summary_text(cards, "همه کارت‌ها")
@@ -7480,7 +7506,7 @@ async def card_detail_back_callback(callback: CallbackQuery):
 @router.callback_query(F.data == "card_search_inline")
 async def card_search_inline_callback(callback: CallbackQuery, state: FSMContext):
     """Handle 'search card' from submenu."""
-    await callback.message.delete()
+    await safe_delete(callback.message)
     await state.set_state(CardSearchForm.query)
     await callback.message.answer(CARD_SEARCH, reply_markup=cancel_menu())
     await safe_callback_answer(callback)
@@ -7580,6 +7606,7 @@ async def card_sort_callback(callback: CallbackQuery):
         new_cache_key = f"c{user.id}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[new_cache_key] = {g["name"]: g for g in groups}
+            _evict_cache(_card_groups_cache)
 
         sort_labels = {"name": "نام", "count": "تعداد", "bank": "بانک", "date": "تاریخ"}
         text = _build_card_group_summary_text(cards, f"همه کارت‌ها (مرتب‌سازی: {sort_labels.get(sort_by, sort_by)})")
@@ -7631,6 +7658,7 @@ async def card_filter_callback(callback: CallbackQuery):
         new_cache_key = f"c{user.id}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[new_cache_key] = {g["name"]: g for g in groups}
+            _evict_cache(_card_groups_cache)
 
         filter_labels = {
             "has_card": "فقط کارت‌دار",
@@ -8136,6 +8164,7 @@ async def card_list(message: Message):
         cache_key = f"c{user.id}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[cache_key] = {g["name"]: g for g in groups}
+            _evict_cache(_card_groups_cache)
         
         # Build summary text
         text = _build_card_group_summary_text(cards, "همه کارت‌ها")
@@ -8190,6 +8219,7 @@ async def card_search_result(message: Message, state: FSMContext):
         cache_key = f"c{user.id}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[cache_key] = {g["name"]: g for g in groups}
+            _evict_cache(_card_groups_cache)
         
         # Build summary text
         text = _build_card_group_summary_text(cards, f"نتایج جستجو: {query}")

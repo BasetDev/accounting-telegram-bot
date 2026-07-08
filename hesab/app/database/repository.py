@@ -1,7 +1,7 @@
 """Database repository layer for CRUD operations."""
 
 from typing import List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 
@@ -242,7 +242,7 @@ class TransactionRepository:
         }
         
         for key, value in kwargs.items():
-            if key in allowed_fields and value is not None:
+            if key in allowed_fields:
                 setattr(txn, key, value)
         
         session.commit()
@@ -253,7 +253,7 @@ class TransactionRepository:
         txn = session.query(Transaction).filter_by(id=txn_id).first()
         if txn:
             txn.is_settled = True
-            txn.settled_at = datetime.utcnow()
+            txn.settled_at = datetime.now(timezone.utc)
             session.commit()
             return True
         return False
@@ -434,7 +434,7 @@ class ReminderRepository:
         reminder = session.query(Reminder).filter_by(id=reminder_id).first()
         if reminder:
             reminder.is_sent = True
-            reminder.sent_at = datetime.utcnow()
+            reminder.sent_at = datetime.now(timezone.utc)
             session.commit()
             return True
         return False
