@@ -3098,7 +3098,7 @@ async def debt_active_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "debt_overdue")
 async def debt_overdue_list(callback: CallbackQuery):
-    """Show overdue debts."""
+    """Show overdue debts grouped by customer."""
     await safe_delete(callback.message)
     session = get_session()
     try:
@@ -3108,9 +3108,10 @@ async def debt_overdue_list(callback: CallbackQuery):
             return
         today = get_jalali_date()
         txns = TransactionRepository.get_overdue(session, user.id, "debt", today)
-        await _send_filtered_list(
-            callback.message, txns, "debt", DEBT_OVERDUE,
-            DEBT_OVERDUE_EMPTY, debt_list_keyboard, session
+        cache_key = f"debt_overdue_{user.id}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_OVERDUE,
+            DEBT_OVERDUE_EMPTY, session, cache_key
         )
     finally:
         session.close()
@@ -3119,7 +3120,7 @@ async def debt_overdue_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "debt_settled")
 async def debt_settled_list(callback: CallbackQuery):
-    """Show settled debts."""
+    """Show settled debts grouped by customer."""
     await safe_delete(callback.message)
     session = get_session()
     try:
@@ -3128,9 +3129,10 @@ async def debt_settled_list(callback: CallbackQuery):
             await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
             return
         txns = TransactionRepository.get_settled(session, user.id, "debt")
-        await _send_filtered_list(
-            callback.message, txns, "debt", DEBT_SETTLED,
-            DEBT_SETTLED_EMPTY, debt_list_keyboard, session
+        cache_key = f"debt_settled_{user.id}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_SETTLED,
+            DEBT_SETTLED_EMPTY, session, cache_key
         )
     finally:
         session.close()
@@ -3139,7 +3141,7 @@ async def debt_settled_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "debt_due_today")
 async def debt_due_today_list(callback: CallbackQuery):
-    """Show debts due today."""
+    """Show debts due today grouped by customer."""
     await safe_delete(callback.message)
     session = get_session()
     try:
@@ -3149,9 +3151,10 @@ async def debt_due_today_list(callback: CallbackQuery):
             return
         today = get_jalali_date()
         txns = TransactionRepository.get_due_today(session, user.id, "debt", today)
-        await _send_filtered_list(
-            callback.message, txns, "debt", DEBT_DUE_TODAY,
-            DEBT_DUE_TODAY_EMPTY, debt_list_keyboard, session
+        cache_key = f"debt_today_{user.id}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_DUE_TODAY,
+            DEBT_DUE_TODAY_EMPTY, session, cache_key
         )
     finally:
         session.close()
@@ -3160,7 +3163,7 @@ async def debt_due_today_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "debt_due_week")
 async def debt_due_week_list(callback: CallbackQuery):
-    """Show debts due this week."""
+    """Show debts due this week grouped by customer."""
     await safe_delete(callback.message)
     session = get_session()
     try:
@@ -3171,9 +3174,10 @@ async def debt_due_week_list(callback: CallbackQuery):
         today = get_jalali_date()
         week_end = get_week_end_jalali()
         txns = TransactionRepository.get_due_this_week(session, user.id, "debt", today, week_end)
-        await _send_filtered_list(
-            callback.message, txns, "debt", DEBT_DUE_WEEK,
-            DEBT_DUE_WEEK_EMPTY, debt_list_keyboard, session
+        cache_key = f"debt_week_{user.id}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_DUE_WEEK,
+            DEBT_DUE_WEEK_EMPTY, session, cache_key
         )
     finally:
         session.close()
@@ -3182,7 +3186,7 @@ async def debt_due_week_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "debt_all")
 async def debt_all_list(callback: CallbackQuery):
-    """Show all debts."""
+    """Show all debts grouped by customer."""
     await safe_delete(callback.message)
     session = get_session()
     try:
@@ -3190,10 +3194,11 @@ async def debt_all_list(callback: CallbackQuery):
         if not user:
             await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
             return
-        txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=50)
-        await _send_filtered_list(
-            callback.message, txns, "debt", DEBT_ALL,
-            DEBT_EMPTY, debt_list_keyboard, session
+        txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
+        cache_key = f"debt_all_{user.id}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_ALL,
+            DEBT_EMPTY, session, cache_key
         )
     finally:
         session.close()
@@ -3353,7 +3358,8 @@ async def debt_settled_cat_selected(callback: CallbackQuery):
                 return
             txns = TransactionRepository.get_settled(session, user.id, "debt")
             await safe_delete(callback.message)
-            await _send_filtered_list(callback.message, txns, "debt", DEBT_SETTLED, DEBT_SETTLED_EMPTY, debt_list_keyboard, session)
+            cache_key = f"debt_settled_{user.id}"
+            await _send_grouped_debt_list(callback.message, txns, DEBT_SETTLED, DEBT_SETTLED_EMPTY, session, cache_key)
         finally:
             session.close()
         await safe_callback_answer(callback)
@@ -3370,7 +3376,8 @@ async def debt_settled_cat_selected(callback: CallbackQuery):
             txns = TransactionRepository.get_settled(session, user.id, "debt")
             filtered = _filter_by_category(txns, category=category)
             await safe_delete(callback.message)
-            await _send_filtered_list(callback.message, filtered, "debt", f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, debt_list_keyboard, session)
+            cache_key = f"debt_settled_{user.id}_{category}"
+            await _send_grouped_debt_list(callback.message, filtered, f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, session, cache_key)
         finally:
             session.close()
         await safe_callback_answer(callback)
@@ -3414,7 +3421,8 @@ async def debt_settled_sub_selected(callback: CallbackQuery):
 
         await safe_delete(callback.message)
         title = f"{DEBT_SETTLED} ({subcategory})" if subcategory != "all" else DEBT_SETTLED
-        await _send_filtered_list(callback.message, txns, "debt", title, DEBT_SETTLED_EMPTY, debt_list_keyboard, session)
+        cache_key = f"debt_settled_{user.id}_{subcategory}"
+        await _send_grouped_debt_list(callback.message, txns, title, DEBT_SETTLED_EMPTY, session, cache_key)
     finally:
         session.close()
     await safe_callback_answer(callback)
@@ -7300,7 +7308,7 @@ async def card_all_callback(callback: CallbackQuery):
             _evict_cache(_card_groups_cache)
 
         # Build summary text
-        text = _build_card_group_summary_text(cards, "همه کارت‌ها")
+        text = _build_card_group_summary_text(groups, "همه کارت‌ها")
 
         # Build customer buttons
         buttons_data = []
@@ -7609,7 +7617,7 @@ async def card_sort_callback(callback: CallbackQuery):
             _evict_cache(_card_groups_cache)
 
         sort_labels = {"name": "نام", "count": "تعداد", "bank": "بانک", "date": "تاریخ"}
-        text = _build_card_group_summary_text(cards, f"همه کارت‌ها (مرتب‌سازی: {sort_labels.get(sort_by, sort_by)})")
+        text = _build_card_group_summary_text(groups, f"همه کارت‌ها (مرتب‌سازی: {sort_labels.get(sort_by, sort_by)})")
 
         buttons_data = []
         for g in groups:
@@ -7666,7 +7674,7 @@ async def card_filter_callback(callback: CallbackQuery):
             "both": "هر دو",
             "all": "همه"
         }
-        text = _build_card_group_summary_text(cards, f"کارت‌ها (فیلتر: {filter_labels.get(filter_by, filter_by)})")
+        text = _build_card_group_summary_text(groups, f"کارت‌ها (فیلتر: {filter_labels.get(filter_by, filter_by)})")
 
         buttons_data = []
         for g in groups:
@@ -8167,7 +8175,7 @@ async def card_list(message: Message):
             _evict_cache(_card_groups_cache)
         
         # Build summary text
-        text = _build_card_group_summary_text(cards, "همه کارت‌ها")
+        text = _build_card_group_summary_text(groups, "همه کارت‌ها")
         
         # Build customer buttons
         buttons_data = []
@@ -8222,7 +8230,7 @@ async def card_search_result(message: Message, state: FSMContext):
             _evict_cache(_card_groups_cache)
         
         # Build summary text
-        text = _build_card_group_summary_text(cards, f"نتایج جستجو: {query}")
+        text = _build_card_group_summary_text(groups, f"نتایج جستجو: {query}")
         
         # Build customer buttons
         buttons_data = []
