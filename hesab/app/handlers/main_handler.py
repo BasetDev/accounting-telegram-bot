@@ -26,10 +26,10 @@ from app.keyboards.markups import (
     main_menu, cancel_menu, back_menu, cancel_back_menu,
     customer_menu, customer_skip_menu, report_menu, income_categories, expense_categories,
     confirm_keyboard, due_date_keyboard, party_keyboard, export_menu, backup_menu, settings_menu,
-    transaction_type_keyboard, pagination_keyboard,
+    transaction_type_keyboard,
     debt_list_keyboard, receivable_list_keyboard, edit_field_keyboard, edit_photo_keyboard,
     photo_skip_menu, card_skip_menu, card_menu, card_submenu, card_name_choice_keyboard,
-    card_list_keyboard, card_copy_keyboard, card_edit_field_keyboard,
+    card_list_keyboard, card_edit_field_keyboard,
     card_customer_keyboard, card_items_keyboard, card_detail_keyboard,
     card_sort_keyboard, card_filter_keyboard, card_owner_overview_keyboard,
     card_linked_txn_keyboard,
@@ -38,11 +38,10 @@ from app.keyboards.markups import (
     receivable_category_keyboard, receivable_subcategory_keyboard,
     DEBT_CATEGORIES, RECEIVABLE_CATEGORIES,
     payment_select_keyboard, payment_type_keyboard, payment_confirm_keyboard,
-    card_info_choice_keyboard, card_select_keyboard, sheba_select_keyboard,
+    card_select_keyboard, sheba_select_keyboard,
     bank_name_select_keyboard, debt_category_filter_keyboard,
     debt_subcategory_filter_keyboard, receivable_category_filter_keyboard,
-    receivable_subcategory_filter_keyboard,     customer_receivable_keyboard,
-    customer_receivable_detail_keyboard,
+    receivable_subcategory_filter_keyboard, customer_receivable_keyboard,
     debt_customer_keyboard,
     debt_customer_debts_keyboard,
     debt_detail_keyboard,
@@ -1203,7 +1202,7 @@ async def _show_debt_confirm(message: Message, state: FSMContext):
     if data.get("sheba"):
         summary += f"\n🏦 شبا: {data['sheba']}"
     if data.get("bank_name"):
-        summary += f"\n🏛 بانک: {normalize_bank_name(data['bank_name'])}"
+        summary += f"\n🏛 بانک: {data['bank_name']}"
 
     await message.answer(summary, reply_markup=confirm_keyboard())
     await state.set_state(DebtForm.confirm)
@@ -1769,7 +1768,7 @@ async def _show_receivable_confirm(message: Message, state: FSMContext):
     if data.get("sheba"):
         summary += f"\n🏦 شبا: {data['sheba']}"
     if data.get("bank_name"):
-        summary += f"\n🏛 بانک: {normalize_bank_name(data['bank_name'])}"
+        summary += f"\n🏛 بانک: {data['bank_name']}"
     await message.answer(summary, reply_markup=confirm_keyboard())
     await state.set_state(ReceivableForm.confirm)
 
@@ -3229,27 +3228,6 @@ async def debt_overdue_list(callback: CallbackQuery):
     await safe_callback_answer(callback)
 
 
-@router.callback_query(F.data == "debt_settled")
-async def debt_settled_list(callback: CallbackQuery):
-    """Show settled debts grouped by customer."""
-    await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_settled(session, user.id, "debt")
-        cache_key = f"debt_settled_{user.id}"
-        await _send_grouped_debt_list(
-            callback.message, txns, DEBT_SETTLED,
-            DEBT_SETTLED_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
-
-
 @router.callback_query(F.data == "debt_due_today")
 async def debt_due_today_list(callback: CallbackQuery):
     """Show debts due today grouped by customer."""
@@ -3289,27 +3267,6 @@ async def debt_due_week_list(callback: CallbackQuery):
         await _send_grouped_debt_list(
             callback.message, txns, DEBT_DUE_WEEK,
             DEBT_DUE_WEEK_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
-
-
-@router.callback_query(F.data == "debt_all")
-async def debt_all_list(callback: CallbackQuery):
-    """Show all debts grouped by customer."""
-    await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
-        cache_key = f"debt_all_{user.id}"
-        await _send_grouped_debt_list(
-            callback.message, txns, DEBT_ALL,
-            DEBT_EMPTY, session, cache_key
         )
     finally:
         session.close()
@@ -4246,27 +4203,6 @@ async def receivable_overdue_list(callback: CallbackQuery):
     await safe_callback_answer(callback)
 
 
-@router.callback_query(F.data == "receivable_settled")
-async def receivable_settled_list(callback: CallbackQuery):
-    """Show settled receivables grouped by customer."""
-    await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_with_payments(session, user.id, "receivable")
-        cache_key = f"recv_settled_{user.id}"
-        await _send_settled_customer_list(
-            callback.message, txns, RECEIVABLE_SETTLED,
-            RECEIVABLE_SETTLED_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
-
-
 @router.callback_query(F.data == "receivable_due_today")
 async def receivable_due_today_list(callback: CallbackQuery):
     """Show receivables due today grouped by customer."""
@@ -4819,27 +4755,6 @@ async def recv_pay_customer_start(callback: CallbackQuery, state: FSMContext):
 
         await callback.message.answer(text, reply_markup=payment_type_keyboard())
         await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
-
-
-@router.callback_query(F.data == "receivable_all")
-async def receivable_all_list(callback: CallbackQuery):
-    """Show all receivables."""
-    await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=50)
-        cache_key = f"all_{user.id}"
-        await _send_grouped_receivable_list(
-            callback.message, txns, RECEIVABLE_ALL,
-            RECEIVABLE_EMPTY, session, cache_key
-        )
     finally:
         session.close()
     await safe_callback_answer(callback)
@@ -5551,61 +5466,6 @@ async def receivable_reports(callback: CallbackQuery):
 # ==============================
 # Payment Handlers (Pay Debt / Receive Receivable)
 # ==============================
-
-@router.callback_query(F.data == "debt_pay")
-async def debt_pay_start(callback: CallbackQuery, state: FSMContext):
-    """Start pay debt flow - show active debts for selection."""
-    await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_active(session, user.id, "debt")
-        if not txns:
-            await callback.message.answer(PAY_DEBT_NO_ACTIVE, reply_markup=debt_submenu())
-            await safe_callback_answer(callback)
-            return
-
-        await _send_grouped_customer_debt_list(
-            callback.message, txns, session
-        )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
-
-
-@router.callback_query(F.data == "receivable_receive")
-async def receivable_receive_start(callback: CallbackQuery, state: FSMContext):
-    """Start receive receivable flow - show active receivables for selection."""
-    await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_active(session, user.id, "receivable")
-        if not txns:
-            await callback.message.answer(RECEIVE_RECV_NO_ACTIVE, reply_markup=receivable_submenu())
-            await safe_callback_answer(callback)
-            return
-
-        payments_data = {}
-        for txn in txns:
-            remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            payments_data[txn.id] = remaining
-
-        await state.update_data(payment_type="receivable", payments_data=payments_data)
-        await state.set_state(PaymentForm.select)
-        await callback.message.answer(
-            RECEIVE_RECV_SELECT, reply_markup=payment_select_keyboard(txns, payments_data)
-        )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("quick_pay_debt:"))
 async def quick_pay_debt(callback: CallbackQuery, state: FSMContext):
@@ -8897,6 +8757,13 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
 # ==============================
 # Fallback Handler
 # ==============================
+
+@router.callback_query()
+async def callback_fallback_handler(callback: CallbackQuery):
+    """Handle unhandled callback queries to prevent timeout."""
+    logger.warning(f"Unhandled callback query: {callback.data} from user {callback.from_user.id}")
+    await safe_callback_answer(callback, "⚠️ عملیات نامعتبر است.", show_alert=True)
+
 
 @router.message()
 async def fallback_handler(message: Message):
