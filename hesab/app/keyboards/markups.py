@@ -509,12 +509,26 @@ def edit_field_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📅 سررسید", callback_data="edit_field:due_date")
     )
     builder.row(
+        InlineKeyboardButton(text="📸 عکس", callback_data="edit_field:photo"),
         InlineKeyboardButton(text="🏷 دسته‌بندی", callback_data="edit_field:category")
     )
     builder.row(
         InlineKeyboardButton(text="✅ تأیید و ذخیره", callback_data="edit_field:save")
     )
     return builder.as_markup()
+
+
+def edit_photo_keyboard(has_photo: bool = False) -> ReplyKeyboardMarkup:
+    """Keyboard for photo management during edit."""
+    builder = ReplyKeyboardBuilder()
+    if has_photo:
+        builder.row(KeyboardButton(text="🗑 حذف عکس"))
+    builder.row(KeyboardButton(text="⏭️ بدون تغییر"))
+    builder.row(
+        KeyboardButton(text="❌ انصراف"),
+        KeyboardButton(text="🔙 بازگشت به منو")
+    )
+    return builder.as_markup(resize_keyboard=True)
 
 
 def card_menu() -> ReplyKeyboardMarkup:

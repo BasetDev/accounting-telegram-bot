@@ -27,7 +27,7 @@ from app.keyboards.markups import (
     customer_menu, customer_skip_menu, report_menu, income_categories, expense_categories,
     confirm_keyboard, due_date_keyboard, party_keyboard, export_menu, backup_menu, settings_menu,
     transaction_type_keyboard, pagination_keyboard,
-    debt_list_keyboard, receivable_list_keyboard, edit_field_keyboard,
+    debt_list_keyboard, receivable_list_keyboard, edit_field_keyboard, edit_photo_keyboard,
     photo_skip_menu, card_skip_menu, card_menu, card_submenu, card_name_choice_keyboard,
     card_list_keyboard, card_copy_keyboard, card_edit_field_keyboard,
     card_customer_keyboard, card_items_keyboard, card_detail_keyboard,
@@ -248,6 +248,7 @@ class DebtEditForm(StatesGroup):
     party = State()
     description = State()
     due_date = State()
+    photo = State()
     confirm = State()
     delete_confirm = State()
 
@@ -258,6 +259,7 @@ class ReceivableEditForm(StatesGroup):
     party = State()
     description = State()
     due_date = State()
+    photo = State()
     confirm = State()
     delete_confirm = State()
 
@@ -1860,6 +1862,7 @@ async def _start_edit_by_id(target_id: int, user_id: int, state: FSMContext, edi
             due_time=txn.due_jalali_time or "",
             category=txn.category or "",
             subcategory=txn.subcategory or "",
+            photo_path=txn.photo_path,
             edit_type=expected_type,
         )
         
@@ -1870,13 +1873,15 @@ async def _start_edit_by_id(target_id: int, user_id: int, state: FSMContext, edi
         cat_display = txn.category or '-'
         if txn.subcategory:
             cat_display += f" / {txn.subcategory}"
+        photo_display = "✅ دارد" if txn.photo_path else "❌ ندارد"
         summary = (
             f"✏️ ویرایش {text_prefix} (شناسه: {txn.id})\n\n"
             f"🏷 دسته: {cat_display}\n"
             f"💰 مبلغ فعلی: {format_amount(txn.amount)} تومان\n"
             f"👤 طرف حساب: {txn.party_name or '-'}\n"
             f"📝 توضیحات: {txn.description or '-'}\n"
-            f"📅 سررسید: {due_display}\n\n"
+            f"📅 سررسید: {due_display}\n"
+            f"📸 عکس: {photo_display}\n\n"
             f"فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:"
         )
         
@@ -1946,13 +1951,15 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
         cat_display = data.get('category') or '-'
         if data.get('subcategory'):
             cat_display += f" / {data['subcategory']}"
+        photo_display = "✅ دارد" if data.get('photo_path') else "❌ ندارد"
         text = (
             f"✏️ خلاصه ویرایش:\n\n"
             f"🏷 دسته: {cat_display}\n"
             f"💰 مبلغ: {format_amount(data['amount'])} تومان\n"
             f"👤 طرف حساب: {data['party'] or '-'}\n"
             f"📝 توضیحات: {data['description'] or '-'}\n"
-            f"📅 سررسید: {due_display}\n\n"
+            f"📅 سررسید: {due_display}\n"
+            f"📸 عکس: {photo_display}\n\n"
             f"آیا تأیید می‌کنید؟"
         )
         await callback.message.edit_text(text, reply_markup=confirm_keyboard())
@@ -1977,6 +1984,31 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer(DEBT_CATEGORY_PROMPT, reply_markup=debt_category_keyboard())
         else:
             await callback.message.answer(RECEIVABLE_CATEGORY_PROMPT, reply_markup=receivable_category_keyboard())
+        await safe_callback_answer(callback)
+        return
+    
+    # Handle photo field - show photo management options
+    if field == "photo":
+        edit_type = data.get("edit_type", "debt")
+        has_photo = bool(data.get('photo_path'))
+        form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
+        
+        if has_photo:
+            prompt = (
+                "📸 مدیریت عکس\n\n"
+                "عکس فعلی: ✅ موجود\n\n"
+                "یک عکس جدید ارسال کنید یا از گزینه‌های زیر استفاده کنید:"
+            )
+        else:
+            prompt = (
+                "📸 مدیریت عکس\n\n"
+                "عکس فعلی: ❌ ندارد\n\n"
+                "یک عکس ارسال کنید یا از گزینه‌های زیر استفاده کنید:"
+            )
+        
+        await callback.message.edit_text(callback.message.text, reply_markup=None)
+        await callback.message.answer(prompt, reply_markup=edit_photo_keyboard(has_photo))
+        await state.set_state(form_class.photo)
         await safe_callback_answer(callback)
         return
     
@@ -2132,6 +2164,84 @@ async def edit_due_date_handler(message: Message, state: FSMContext):
     await state.set_state(form_class.edit_id)
 
 
+@router.message(DebtEditForm.photo)
+@router.message(ReceivableEditForm.photo)
+async def edit_photo_handler(message: Message, state: FSMContext):
+    """Handle photo input for edit."""
+    if message.text == "❌ انصراف":
+        await state.clear()
+        await message.answer(CANCELED, reply_markup=main_menu())
+        return
+    if message.text == "🔙 بازگشت به منو":
+        await state.clear()
+        await message.answer(BACK_TEXT, reply_markup=main_menu())
+        return
+    
+    data = await state.get_data()
+    edit_type = data.get("edit_type", "debt")
+    form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
+    
+    # Handle "no change" - keep current photo
+    if message.text == "⏭️ بدون تغییر":
+        await message.answer(
+            "✅ عکس بدون تغییر باقی ماند.\n\nفیلد بعدی را انتخاب کنید:",
+            reply_markup=edit_field_keyboard()
+        )
+        await state.set_state(form_class.edit_id)
+        return
+    
+    # Handle "remove photo"
+    if message.text == "🗑 حذف عکس":
+        # Delete old photo file if exists
+        old_photo = data.get('photo_path')
+        if old_photo and os.path.exists(old_photo):
+            try:
+                os.remove(old_photo)
+                logger.info(f"Deleted old photo: {old_photo}")
+            except Exception as e:
+                logger.error(f"Error deleting old photo: {e}")
+        
+        await state.update_data(photo_path=None)
+        await message.answer(
+            "✅ عکس حذف شد.\n\nفیلد بعدی را انتخاب کنید:",
+            reply_markup=edit_field_keyboard()
+        )
+        await state.set_state(form_class.edit_id)
+        return
+    
+    # Handle photo upload
+    if message.content_type == ContentType.PHOTO:
+        photo = message.photo[-1]
+        try:
+            # Delete old photo file if exists
+            old_photo = data.get('photo_path')
+            if old_photo and os.path.exists(old_photo):
+                try:
+                    os.remove(old_photo)
+                    logger.info(f"Deleted old photo: {old_photo}")
+                except Exception as e:
+                    logger.error(f"Error deleting old photo: {e}")
+            
+            photo_path = await _save_photo(message.bot, photo, message.from_user.id)
+            await state.update_data(photo_path=photo_path)
+            await message.answer(
+                "✅ عکس جدید ذخیره شد.\n\nفیلد بعدی را انتخاب کنید:",
+                reply_markup=edit_field_keyboard()
+            )
+            await state.set_state(form_class.edit_id)
+        except Exception as e:
+            logger.error(f"Error saving photo: {e}")
+            await message.answer("⚠️ خطا در ذخیره عکس. لطفاً دوباره تلاش کنید.")
+        return
+    
+    # Invalid input
+    has_photo = bool(data.get('photo_path'))
+    await message.answer(
+        "📸 لطفاً یک عکس ارسال کنید یا از گزینه‌های موجود استفاده کنید.",
+        reply_markup=edit_photo_keyboard(has_photo)
+    )
+
+
 # --- Category edit callbacks ---
 
 @router.callback_query(F.data.startswith("debt_cat:"), DebtEditForm.edit_id)
@@ -2284,6 +2394,7 @@ async def _process_edit_confirm(callback: CallbackQuery, state: FSMContext, text
                 'due_jalali_time': data.get('due_time'),
                 'category': data.get('category'),
                 'subcategory': data.get('subcategory'),
+                'photo_path': data.get('photo_path'),
             }
             
             TransactionRepository.update(session, data['edit_id'], **update_kwargs)
