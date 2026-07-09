@@ -17,7 +17,7 @@ from aiogram.enums import ContentType
 from aiogram.types import ErrorEvent
 
 
-from app.database.models import init_database
+from app.database.models import init_database, Transaction, Payment
 from app.database.repository import (
     UserRepository, TransactionRepository, CustomerRepository,
     ReminderRepository, BackupRepository, CardInfoRepository, PaymentRepository
@@ -7447,7 +7447,13 @@ async def card_back_callback(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    # Rebuild customer list
+    # Rebuild customer list with full summary text (matching Level 1 original)
+    all_cards = []
+    for g in groups.values():
+        all_cards.extend(g["cards"])
+
+    text = _build_card_group_summary_text(list(groups.values()), "همه کارت‌ها")
+
     buttons_data = []
     for name, g in groups.items():
         label = f"👤 {name} | {g['count']} کارت"
@@ -7457,10 +7463,7 @@ async def card_back_callback(callback: CallbackQuery):
             "callback_data": f"card_cust_detail:{cache_key}:{safe_name}"
         })
 
-    total_cards = sum(g["count"] for g in groups)
-    text = f"💳 همه کارت‌ها\n\n📊 {total_cards} کارت | 👤 {len(groups)} نام"
-
-    await callback.message.edit_text(text, reply_markup=card_customer_keyboard(buttons_data))
+    await callback.message.edit_text(text, reply_markup=card_owner_overview_keyboard(buttons_data, cache_key))
     await safe_callback_answer(callback)
 
 
@@ -7914,9 +7917,8 @@ async def card_name_choice_handler(message: Message, state: FSMContext):
         if customers:
             await message.answer(CARD_SELECT_CUSTOMER, reply_markup=party_keyboard(customers))
         else:
-            await message.answer("📭 هیچ مشتری یافت نشد. لطفاً ابتدا مشتری اضافه کنید یا نام را به صورت دستی وارد کنید.", reply_markup=cancel_back_menu())
             await state.set_state(CardForm.name_manual)
-            await message.answer(CARD_ENTER_NAME_MANUAL, reply_markup=cancel_back_menu())
+            await message.answer("📭 هیچ مشتری یافت نشد. لطفاً نام را به صورت دستی وارد کنید:", reply_markup=cancel_back_menu())
 
 
 @router.message(CardForm.name_manual)
@@ -7962,17 +7964,18 @@ async def card_name_customer_handler(message: Message, state: FSMContext):
             if customer.full_name == message.text:
                 selected_customer = customer
                 break
+        
+        if selected_customer:
+            await state.update_data(name=selected_customer.full_name, customer_id=selected_customer.id)
+            await state.set_state(CardForm.card_number)
+            await message.answer(CARD_ENTER_CARD, reply_markup=card_skip_menu())
+        else:
+            # Re-fetch customers for the keyboard (still within session)
+            await message.answer("⚠️ مشتری انتخاب شده نامعتبر است.")
+            await state.set_state(CardForm.name_customer_select)
+            await message.answer(CARD_SELECT_CUSTOMER, reply_markup=party_keyboard(customers))
     finally:
         session.close()
-    
-    if selected_customer:
-        await state.update_data(name=selected_customer.full_name, customer_id=selected_customer.id)
-        await state.set_state(CardForm.card_number)
-        await message.answer(CARD_ENTER_CARD, reply_markup=card_skip_menu())
-    else:
-        await message.answer("⚠️ مشتری انتخاب شده نامعتبر است.")
-        await state.set_state(CardForm.name_customer_select)
-        await message.answer(CARD_SELECT_CUSTOMER, reply_markup=party_keyboard(customers))
 
 
 @router.message(CardForm.card_number)
@@ -7993,8 +7996,8 @@ async def card_number_handler(message: Message, state: FSMContext):
         await message.answer(CARD_ENTER_SHEBA, reply_markup=card_skip_menu())
         return
     
-    # Validate card number (16 digits)
-    card_number = message.text.replace(" ", "")
+    # Validate card number (16 digits), strip spaces and dashes
+    card_number = message.text.replace(" ", "").replace("-", "")
     if not card_number.isdigit() or len(card_number) != 16:
         await message.answer(CARD_VALID_ERROR_16)
         return
@@ -8093,6 +8096,15 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle card confirmation and save."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
+        
+        # Validate that at least one of card_number or sheba is provided
+        if not data.get("card_number") and not data.get("sheba"):
+            await callback.message.edit_text(CARD_VALID_ERROR_EMPTY, reply_markup=None)
+            await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
+            await state.clear()
+            await safe_callback_answer(callback)
+            return
+        
         session = get_session()
         try:
             user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
@@ -8313,6 +8325,12 @@ async def card_edit_field_selected(callback: CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback)
         return
     
+    # Validate field value
+    valid_fields = {"name", "card", "sheba", "bank"}
+    if field not in valid_fields:
+        await safe_callback_answer(callback, "⚠️ فیلد نامعتبر.", show_alert=True)
+        return
+    
     # Set the appropriate state for the selected field
     field_prompts = {
         "name": "✏️ نام جدید را وارد کنید:\n(برای عدم تغییر، - را وارد کنید)",
@@ -8321,15 +8339,8 @@ async def card_edit_field_selected(callback: CallbackQuery, state: FSMContext):
         "bank": "🏛 نام بانک جدید را وارد کنید:\n(برای عدم تغییر، - را وارد کنید)"
     }
     
-    state_map = {
-        "name": CardEditForm.value,
-        "card": CardEditForm.value,
-        "sheba": CardEditForm.value,
-        "bank": CardEditForm.value
-    }
-    
     await state.update_data(edit_field=field)
-    await state.set_state(state_map[field])
+    await state.set_state(CardEditForm.value)
     
     # Remove inline keyboard from current message
     await callback.message.edit_text(callback.message.text, reply_markup=None)
@@ -8353,11 +8364,20 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
     
     data = await state.get_data()
     field = data.get("edit_field")
+    edit_id = data.get("edit_id")
+    
+    # Load original card values for "-" (no change) handling
+    session = get_session()
+    try:
+        original_card = CardInfoRepository.get_by_id(session, edit_id)
+    finally:
+        session.close()
     
     if field == "name":
         if message.text == "-":
-            # No change
-            pass
+            # No change: restore original value
+            if original_card:
+                await state.update_data(name=original_card.name)
         else:
             if not message.text or len(message.text.strip()) == 0:
                 await message.answer(CARD_NAME_REQUIRED)
@@ -8365,19 +8385,21 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
             await state.update_data(name=message.text.strip())
     elif field == "card":
         if message.text == "-":
-            # No change
-            pass
+            # No change: restore original value
+            if original_card:
+                await state.update_data(card_number=original_card.card_number)
         else:
-            # Validate card number (16 digits)
-            card_number = message.text.replace(" ", "")
+            # Validate card number (16 digits), strip spaces and dashes
+            card_number = message.text.replace(" ", "").replace("-", "")
             if card_number and (not card_number.isdigit() or len(card_number) != 16):
                 await message.answer(CARD_VALID_ERROR_16)
                 return
             await state.update_data(card_number=card_number if card_number else None)
     elif field == "sheba":
         if message.text == "-":
-            # No change
-            pass
+            # No change: restore original value
+            if original_card:
+                await state.update_data(sheba=original_card.sheba)
         else:
             # Validate sheba: user enters only 24 digits (without "IR" prefix)
             sheba_digits = ''.join(filter(str.isdigit, message.text))
@@ -8388,8 +8410,9 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
             await state.update_data(sheba=sheba_digits if sheba_digits else None)
     elif field == "bank":
         if message.text == "-":
-            # No change
-            pass
+            # No change: restore original value
+            if original_card:
+                await state.update_data(bank_name=original_card.bank_name)
         else:
             await state.update_data(bank_name=normalize_bank_name(message.text))
     
@@ -8462,6 +8485,16 @@ async def card_edit_confirm(callback: CallbackQuery, state: FSMContext):
             existing_cards = CardInfoRepository.get_by_user(session, user.id)
             card_number = data.get("card_number")
             sheba = data.get("sheba")
+            
+            # Validate that at least one of card_number or sheba is provided after edit
+            final_card_number = card_number if card_number is not None else card.card_number
+            final_sheba = sheba if sheba is not None else card.sheba
+            if not final_card_number and not final_sheba:
+                await callback.message.edit_text(CARD_VALID_ERROR_EMPTY, reply_markup=None)
+                await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
+                await state.clear()
+                await safe_callback_answer(callback)
+                return
             
             duplicate_found = False
             duplicate_info = ""
