@@ -692,13 +692,6 @@ async def expense_photo(message: Message, state: FSMContext):
 # Debt Handlers
 # ==============================
 
-@router.message(F.text == "📋 ثبت بدهی")
-async def debt_start(message: Message, state: FSMContext):
-    """Start debt registration flow with category selection."""
-    await state.set_state(DebtForm.category)
-    await message.answer(DEBT_CATEGORY_PROMPT, reply_markup=debt_category_keyboard())
-
-
 @router.callback_query(F.data == "debt_register")
 async def debt_register_from_submenu(callback: CallbackQuery, state: FSMContext):
     """Handle 'register new debt' from submenu - show category selection."""
@@ -1262,13 +1255,6 @@ async def debt_confirm(callback: CallbackQuery, state: FSMContext):
 # ==============================
 # Receivable Handlers
 # ==============================
-
-@router.message(F.text == "📌 ثبت طلب")
-async def receivable_start(message: Message, state: FSMContext):
-    """Start receivable registration with category selection."""
-    await state.set_state(ReceivableForm.category)
-    await message.answer(RECEIVABLE_CATEGORY_PROMPT, reply_markup=receivable_category_keyboard())
-
 
 @router.callback_query(F.data == "receivable_register")
 async def receivable_register_from_submenu(callback: CallbackQuery, state: FSMContext):
@@ -6694,7 +6680,7 @@ async def search_query(message: Message, state: FSMContext):
     await message.answer("نوع تراکنش را انتخاب کنید:", reply_markup=transaction_type_keyboard())
 
 
-@router.callback_query(SearchForm.transaction_type)
+@router.callback_query(F.data.in_(["search_type_income", "search_type_expense", "search_type_debt", "search_type_receivable", "search_type_all"]))
 async def search_type_selected(callback: CallbackQuery, state: FSMContext):
     """Process search type filter."""
     data = await state.get_data()
@@ -8751,9 +8737,6 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
         session.close()
 
 
-# ==============================
-# Fallback Handler
-# ==============================
 # ==============================
 # Fallback Handler
 # ==============================

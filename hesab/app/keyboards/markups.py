@@ -455,6 +455,9 @@ def photo_skip_menu() -> ReplyKeyboardMarkup:
         KeyboardButton(text="⏭️ بدون عکس"),
         KeyboardButton(text="❌ انصراف")
     )
+    builder.row(
+        KeyboardButton(text="🔙 بازگشت به منو"),
+    )
     return builder.as_markup(resize_keyboard=True)
 
 
