@@ -15,7 +15,7 @@ from aiogram.types import BotCommand
 
 from app.config import settings
 from app.utils.logger import logger
-from app.database.models import init_database
+from app.database.models import init_database, close_database
 from app.handlers.main_handler import router
 
 
@@ -41,9 +41,24 @@ async def main():
         logger.error("Bot token is not configured! Please set BOT_TOKEN in .env file.")
         return
 
-    # Initialize database at startup
-    init_database()
-    logger.info("Database initialized.")
+    if not settings.is_db_configured:
+        logger.error("MongoDB URI is not configured! Please set MONGO_URI in .env file.")
+        return
+
+    # Initialize MongoDB connection at startup (with retries)
+    import time
+    for db_attempt in range(3):
+        try:
+            init_database()
+            logger.info("MongoDB Atlas database initialized.")
+            break
+        except Exception as e:
+            logger.warning(f"MongoDB attempt {db_attempt + 1}/3 failed: {e}")
+            if db_attempt < 2:
+                time.sleep(5)
+            else:
+                logger.critical(f"Failed to connect to MongoDB Atlas after 3 attempts: {e}")
+                return
 
     # Initialize bot and dispatcher
     bot = Bot(
@@ -59,8 +74,12 @@ async def main():
     await set_bot_commands(bot)
 
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} started!")
-    
-    await dp.start_polling(bot)
+
+    try:
+        await dp.start_polling(bot)
+    finally:
+        close_database()
+        logger.info("Bot stopped and database connection closed.")
 
 
 if __name__ == "__main__":

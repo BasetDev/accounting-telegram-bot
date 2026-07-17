@@ -1,13 +1,12 @@
 """Export service for generating Excel and PDF reports."""
 
 import os
-from typing import List
+from typing import List, Dict
 from io import BytesIO
 
 from app.config import settings
 from app.utils.logger import logger
 from app.utils.jdatetime_helper import get_jalali_date, format_amount
-from app.database.models import Transaction, Customer
 
 try:
     import openpyxl
@@ -51,7 +50,7 @@ def _persian_font_path() -> str:
 
 
 async def export_transactions_excel(
-    transactions: List[Transaction],
+    transactions: List[Dict],
     filename: str = None
 ) -> str:
     """Export transactions to Excel file and return file path."""
@@ -105,14 +104,14 @@ async def export_transactions_excel(
     for row_idx, txn in enumerate(transactions, 2):
         data = [
             row_idx - 1,
-            type_names.get(txn.transaction_type, txn.transaction_type),
-            f"{txn.amount:,.0f}",
-            txn.category or "-",
-            txn.description or "-",
-            txn.jalali_date,
-            txn.jalali_time,
-            txn.party_name or "-",
-            "تسویه شده" if txn.is_settled else "جاری"
+            type_names.get(txn["transaction_type"], txn["transaction_type"]),
+            f"{txn["amount"]:,.0f}",
+            txn.get("category") or "-",
+            txn.get("description") or "-",
+            txn["jalali_date"],
+            txn["jalali_time"],
+            txn.get("party_name") or "-",
+            "تسویه شده" if txn.get("is_settled", False) else "جاری"
         ]
         for col, value in enumerate(data, 1):
             cell = ws.cell(row=row_idx, column=col, value=value)
@@ -132,7 +131,7 @@ async def export_transactions_excel(
 
 
 async def export_transactions_pdf(
-    transactions: List[Transaction],
+    transactions: List[Dict],
     filename: str = None
 ) -> str:
     """Export transactions to PDF file and return file path."""
@@ -192,15 +191,15 @@ async def export_transactions_pdf(
     ]
     
     for idx, txn in enumerate(transactions, 1):
-        t_type = type_names.get(txn.transaction_type, txn.transaction_type)
-        amount = f"{txn.amount:,.0f}"
-        desc = (txn.description or "")[:30]
+        t_type = type_names.get(txn["transaction_type"], txn["transaction_type"])
+        amount = f"{txn["amount"]:,.0f}"
+        desc = (txn.get("description") or "")[:30]
         table_data.append([
             str(idx),
             t_type,
             amount,
-            txn.jalali_date,
-            txn.jalali_time,
+            txn["jalali_date"],
+            txn["jalali_time"],
             desc
         ])
     

@@ -24,7 +24,9 @@ class Settings:
     ADMIN_ID: int = int(os.getenv("ADMIN_ID", "0"))
     ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
 
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///data/hesab.db")
+    # MongoDB Atlas Configuration
+    MONGO_URI: str = os.getenv("MONGO_URI", "")
+    MONGO_DB_NAME: str = os.getenv("MONGO_DB_NAME", "hesab")
 
     APP_NAME: str = os.getenv("APP_NAME", "📊 حسابداری کسب‌وکار")
     APP_VERSION: str = os.getenv("APP_VERSION", "1.0.0")
@@ -42,6 +44,11 @@ class Settings:
     def is_valid(self) -> bool:
         """Check if the bot token is configured."""
         return bool(self.BOT_TOKEN) and self.BOT_TOKEN != "your_bot_token_here"
+
+    @property
+    def is_db_configured(self) -> bool:
+        """Check if MongoDB connection is configured."""
+        return bool(self.MONGO_URI)
 
 
 settings = Settings()

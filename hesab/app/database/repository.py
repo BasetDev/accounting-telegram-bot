@@ -1,91 +1,112 @@
-"""Database repository layer for CRUD operations."""
+"""MongoDB repository layer for CRUD operations."""
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from pymongo.collection import Collection
+from pymongo import DESCENDING, ASCENDING
 
-from app.database.models import User, Transaction, Customer, Reminder, Backup, CardInfo, Payment
+from app.database.models import (
+    get_collection, get_next_sequence,
+    create_user_doc, create_transaction_doc, create_customer_doc,
+    create_reminder_doc, create_card_info_doc, create_backup_doc,
+    create_payment_doc, _utcnow
+)
+from app.utils.logger import logger
 
 
 class UserRepository:
     """User CRUD operations."""
 
     @staticmethod
-    def get_or_create(session: Session, telegram_id: int, username: str = None,
-                      first_name: str = None, last_name: str = None) -> User:
-        user = session.query(User).filter_by(telegram_id=telegram_id).first()
+    def get_or_create(telegram_id: int, username: str = None,
+                      first_name: str = None, last_name: str = None) -> Dict:
+        users = get_collection("users")
+        user = users.find_one({"telegram_id": telegram_id})
+
         if not user:
-            user = User(
+            user = create_user_doc(
                 telegram_id=telegram_id,
                 username=username,
                 first_name=first_name,
-                last_name=last_name,
-                is_admin=False,
-                is_active=True
+                last_name=last_name
             )
-            session.add(user)
-            session.commit()
+            users.insert_one(user)
         else:
             # Update info if changed
-            changed = False
-            if username and user.username != username:
-                user.username = username
-                changed = True
-            if first_name and user.first_name != first_name:
-                user.first_name = first_name
-                changed = True
-            if last_name and user.last_name != last_name:
-                user.last_name = last_name
-                changed = True
-            if changed:
-                session.commit()
+            update_fields = {}
+            if username and user.get("username") != username:
+                update_fields["username"] = username
+            if first_name and user.get("first_name") != first_name:
+                update_fields["first_name"] = first_name
+            if last_name and user.get("last_name") != last_name:
+                update_fields["last_name"] = last_name
+            if update_fields:
+                update_fields["updated_at"] = _utcnow()
+                users.update_one({"_id": user["_id"]}, {"$set": update_fields})
+                user.update(update_fields)
+
+        user.pop("_id", None)
         return user
 
     @staticmethod
-    def get_by_telegram_id(session: Session, telegram_id: int) -> Optional[User]:
-        return session.query(User).filter_by(telegram_id=telegram_id).first()
-
-    @staticmethod
-    def get_by_id(session: Session, user_id: int) -> Optional[User]:
-        return session.query(User).filter_by(id=user_id).first()
-
-    @staticmethod
-    def make_admin(session: Session, telegram_id: int) -> bool:
-        user = session.query(User).filter_by(telegram_id=telegram_id).first()
+    def get_by_telegram_id(telegram_id: int) -> Optional[Dict]:
+        users = get_collection("users")
+        user = users.find_one({"telegram_id": telegram_id})
         if user:
-            user.is_admin = True
-            session.commit()
-            return True
-        return False
+            user.pop("_id", None)
+        return user
 
     @staticmethod
-    def get_all_users(session: Session) -> List[User]:
-        return session.query(User).all()
+    def get_by_id(user_id: int) -> Optional[Dict]:
+        users = get_collection("users")
+        user = users.find_one({"id": user_id})
+        if user:
+            user.pop("_id", None)
+        return user
+
+    @staticmethod
+    def make_admin(telegram_id: int) -> bool:
+        users = get_collection("users")
+        result = users.update_one(
+            {"telegram_id": telegram_id},
+            {"$set": {"is_admin": True, "updated_at": _utcnow()}}
+        )
+        return result.modified_count > 0
+
+    @staticmethod
+    def get_all_users() -> List[Dict]:
+        users = get_collection("users")
+        result = []
+        for user in users.find():
+            user.pop("_id", None)
+            result.append(user)
+        return result
+
 
 class TransactionRepository:
     """Transaction CRUD operations."""
 
     @staticmethod
-    def create(session: Session, user_id: int, transaction_type: str,
+    def create(user_id: int, transaction_type: str,
                amount: float, jalali_date: str, jalali_time: str, jalali_full: str,
                description: str = None, category: str = None, subcategory: str = None,
                party_name: str = None, customer_id: int = None,
                due_jalali_date: str = None, due_jalali_time: str = None,
                photo_path: str = None, card_number: str = None, sheba: str = None,
-               bank_name: str = None) -> Transaction:
-        txn = Transaction(
+               bank_name: str = None) -> Dict:
+        transactions = get_collection("transactions")
+        txn = create_transaction_doc(
             user_id=user_id,
             transaction_type=transaction_type,
             amount=amount,
+            jalali_date=jalali_date,
+            jalali_time=jalali_time,
+            jalali_full=jalali_full,
             description=description,
             category=category,
             subcategory=subcategory,
             party_name=party_name,
             customer_id=customer_id,
-            jalali_date=jalali_date,
-            jalali_time=jalali_time,
-            jalali_full=jalali_full,
             due_jalali_date=due_jalali_date,
             due_jalali_time=due_jalali_time,
             photo_path=photo_path,
@@ -93,361 +114,437 @@ class TransactionRepository:
             sheba=sheba,
             bank_name=bank_name
         )
-        session.add(txn)
-        session.commit()
+        transactions.insert_one(txn)
+        txn.pop("_id", None)
         return txn
 
     @staticmethod
-    def get_by_id(session: Session, txn_id: int) -> Optional[Transaction]:
-        return session.query(Transaction).filter_by(id=txn_id).first()
+    def get_by_id(txn_id: int) -> Optional[Dict]:
+        transactions = get_collection("transactions")
+        txn = transactions.find_one({"id": txn_id})
+        if txn:
+            txn.pop("_id", None)
+        return txn
 
     @staticmethod
-    def get_by_user(session: Session, user_id: int,
-                    transaction_type: str = None,
-                    limit: int = 50, offset: int = 0) -> List[Transaction]:
-        query = session.query(Transaction).filter_by(user_id=user_id)
+    def get_by_user(user_id: int, transaction_type: str = None,
+                    limit: int = 50, offset: int = 0) -> List[Dict]:
+        transactions = get_collection("transactions")
+        query = {"user_id": user_id}
         if transaction_type:
-            query = query.filter_by(transaction_type=transaction_type)
-        return query.order_by(Transaction.id.desc()).limit(limit).offset(offset).all()
+            query["transaction_type"] = transaction_type
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING).skip(offset).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_active(session: Session, user_id: int, transaction_type: str,
-                   limit: int = 50) -> List[Transaction]:
+    def get_active(user_id: int, transaction_type: str,
+                   limit: int = 50) -> List[Dict]:
         """Get non-settled transactions of a given type."""
-        return session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == transaction_type,
-            Transaction.is_settled == False
-        ).order_by(Transaction.id.desc()).limit(limit).all()
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "transaction_type": transaction_type,
+            "is_settled": False
+        }
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_settled(session: Session, user_id: int, transaction_type: str,
-                    limit: int = 50) -> List[Transaction]:
+    def get_settled(user_id: int, transaction_type: str,
+                    limit: int = 50) -> List[Dict]:
         """Get settled transactions of a given type."""
-        return session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == transaction_type,
-            Transaction.is_settled == True
-        ).order_by(Transaction.id.desc()).limit(limit).all()
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "transaction_type": transaction_type,
+            "is_settled": True
+        }
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_with_payments(session: Session, user_id: int, transaction_type: str,
-                          limit: int = 50) -> List[Transaction]:
-        """Get transactions that have at least one payment recorded (partial or full)."""
-        from app.database.models import Payment
-        return session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == transaction_type,
-            Transaction.id.in_(
-                session.query(Payment.transaction_id).filter(
-                    Payment.user_id == user_id
-                ).distinct()
-            )
-        ).order_by(Transaction.id.desc()).limit(limit).all()
+    def get_with_payments(user_id: int, transaction_type: str,
+                          limit: int = 50) -> List[Dict]:
+        """Get transactions that have at least one payment recorded."""
+        payments = get_collection("payments")
+        txn_ids = payments.distinct("transaction_id", {"user_id": user_id})
+
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "transaction_type": transaction_type,
+            "id": {"$in": txn_ids}
+        }
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_overdue(session: Session, user_id: int, transaction_type: str,
-                    today_jalali: str, limit: int = 50) -> List[Transaction]:
+    def get_overdue(user_id: int, transaction_type: str,
+                    today_jalali: str, limit: int = 50) -> List[Dict]:
         """Get non-settled transactions with due date before today."""
-        return session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == transaction_type,
-            Transaction.is_settled == False,
-            Transaction.due_jalali_date.isnot(None),
-            Transaction.due_jalali_date < today_jalali
-        ).order_by(Transaction.due_jalali_date.asc()).limit(limit).all()
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "transaction_type": transaction_type,
+            "is_settled": False,
+            "due_jalali_date": {"$ne": None, "$lt": today_jalali}
+        }
+        result = []
+        for txn in transactions.find(query).sort("due_jalali_date", ASCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_due_today(session: Session, user_id: int, transaction_type: str,
-                      today_jalali: str, limit: int = 50) -> List[Transaction]:
+    def get_due_today(user_id: int, transaction_type: str,
+                      today_jalali: str, limit: int = 50) -> List[Dict]:
         """Get non-settled transactions with due date = today."""
-        return session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == transaction_type,
-            Transaction.is_settled == False,
-            Transaction.due_jalali_date == today_jalali
-        ).order_by(Transaction.id.desc()).limit(limit).all()
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "transaction_type": transaction_type,
+            "is_settled": False,
+            "due_jalali_date": today_jalali
+        }
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_due_this_week(session: Session, user_id: int, transaction_type: str,
+    def get_due_this_week(user_id: int, transaction_type: str,
                           today_jalali: str, week_end_jalali: str,
-                          limit: int = 50) -> List[Transaction]:
+                          limit: int = 50) -> List[Dict]:
         """Get non-settled transactions with due date between today and end of week."""
-        return session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == transaction_type,
-            Transaction.is_settled == False,
-            Transaction.due_jalali_date.isnot(None),
-            Transaction.due_jalali_date >= today_jalali,
-            Transaction.due_jalali_date <= week_end_jalali
-        ).order_by(Transaction.due_jalali_date.asc()).limit(limit).all()
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "transaction_type": transaction_type,
+            "is_settled": False,
+            "due_jalali_date": {"$ne": None, "$gte": today_jalali, "$lte": week_end_jalali}
+        }
+        result = []
+        for txn in transactions.find(query).sort("due_jalali_date", ASCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_by_date_range(session: Session, user_id: int,
-                           start_date: str, end_date: str,
-                           transaction_type: str = None) -> List[Transaction]:
-        query = session.query(Transaction).filter(
-            and_(
-                Transaction.user_id == user_id,
-                Transaction.jalali_date >= start_date,
-                Transaction.jalali_date <= end_date
-            )
-        )
+    def get_by_date_range(user_id: int, start_date: str, end_date: str,
+                          transaction_type: str = None) -> List[Dict]:
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "jalali_date": {"$gte": start_date, "$lte": end_date}
+        }
         if transaction_type:
-            query = query.filter_by(transaction_type=transaction_type)
-        return query.order_by(Transaction.id.desc()).all()
+            query["transaction_type"] = transaction_type
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_by_customer(session: Session, customer_id: int) -> List[Transaction]:
-        return session.query(Transaction).filter_by(
-            customer_id=customer_id
-        ).order_by(Transaction.id.desc()).all()
+    def get_by_customer(customer_id: int) -> List[Dict]:
+        transactions = get_collection("transactions")
+        result = []
+        for txn in transactions.find({"customer_id": customer_id}).sort("id", DESCENDING):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
     @staticmethod
-    def get_summary(session: Session, user_id: int,
-                    transaction_type: str = None) -> float:
-        query = session.query(func.sum(Transaction.amount)).filter(
-            Transaction.user_id == user_id,
-            Transaction.is_settled == False
-        )
+    def get_summary(user_id: int, transaction_type: str = None) -> float:
+        transactions = get_collection("transactions")
+        query = {
+            "user_id": user_id,
+            "is_settled": False
+        }
         if transaction_type:
-            query = query.filter(Transaction.transaction_type == transaction_type)
-        result = query.scalar()
-        return float(result) if result else 0.0
+            query["transaction_type"] = transaction_type
+
+        pipeline = [
+            {"$match": query},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]
+        result = list(transactions.aggregate(pipeline))
+        return float(result[0]["total"]) if result else 0.0
 
     @staticmethod
-    def get_total_by_type(session: Session, user_id: int) -> dict:
+    def get_total_by_type(user_id: int) -> dict:
         """Get total amounts grouped by transaction type."""
         results = {}
         for ttype in ['income', 'expense', 'debt', 'receivable']:
-            total = session.query(func.sum(Transaction.amount)).filter(
-                Transaction.user_id == user_id,
-                Transaction.transaction_type == ttype,
-                Transaction.is_settled == False
-            ).scalar()
-            results[ttype] = float(total) if total else 0.0
+            total = TransactionRepository.get_summary(user_id, ttype)
+            results[ttype] = total
         return results
 
     @staticmethod
-    def update(session: Session, txn_id: int, **kwargs) -> bool:
+    def update(txn_id: int, **kwargs) -> bool:
         """Update transaction fields. Only provided kwargs are updated."""
-        txn = session.query(Transaction).filter_by(id=txn_id).first()
-        if not txn:
-            return False
-        
+        transactions = get_collection("transactions")
         allowed_fields = {
             'amount', 'description', 'category', 'subcategory', 'party_name',
             'due_jalali_date', 'due_jalali_time', 'jalali_date', 'jalali_time', 'jalali_full',
             'is_settled', 'settled_at', 'photo_path', 'card_number', 'sheba', 'bank_name'
         }
-        
-        for key, value in kwargs.items():
-            if key in allowed_fields:
-                setattr(txn, key, value)
-        
-        session.commit()
-        return True
+        update_data = {k: v for k, v in kwargs.items() if k in allowed_fields}
+        if not update_data:
+            return False
+
+        result = transactions.update_one(
+            {"id": txn_id},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
     @staticmethod
-    def settle_transaction(session: Session, txn_id: int) -> bool:
-        txn = session.query(Transaction).filter_by(id=txn_id).first()
-        if txn:
-            txn.is_settled = True
-            txn.settled_at = datetime.now(timezone.utc)
-            session.commit()
-            return True
-        return False
+    def settle_transaction(txn_id: int) -> bool:
+        transactions = get_collection("transactions")
+        result = transactions.update_one(
+            {"id": txn_id},
+            {"$set": {
+                "is_settled": True,
+                "settled_at": datetime.now(timezone.utc)
+            }}
+        )
+        return result.modified_count > 0
 
     @staticmethod
-    def delete(session: Session, txn_id: int) -> bool:
-        txn = session.query(Transaction).filter_by(id=txn_id).first()
-        if txn:
-            session.delete(txn)
-            session.commit()
-            return True
-        return False
+    def delete(txn_id: int) -> bool:
+        transactions = get_collection("transactions")
+        result = transactions.delete_one({"id": txn_id})
+        return result.deleted_count > 0
 
     @staticmethod
-    def search(session: Session, user_id: int, query_text: str = None,
+    def search(user_id: int, query_text: str = None,
                transaction_type: str = None, min_amount: float = None,
                max_amount: float = None, start_date: str = None,
                end_date: str = None, category: str = None,
-               party_name: str = None, limit: int = 20) -> List[Transaction]:
-        q = session.query(Transaction).filter(Transaction.user_id == user_id)
-        
-        conditions = []
-        
+               party_name: str = None, limit: int = 20) -> List[Dict]:
+        transactions = get_collection("transactions")
+        query = {"user_id": user_id}
+
         if query_text:
-            like_pattern = f"%{query_text}%"
-            conditions.append(
-                or_(
-                    Transaction.description.ilike(like_pattern),
-                    Transaction.category.ilike(like_pattern),
-                    Transaction.party_name.ilike(like_pattern)
-                )
-            )
-        
+            query["$or"] = [
+                {"description": {"$regex": query_text, "$options": "i"}},
+                {"category": {"$regex": query_text, "$options": "i"}},
+                {"party_name": {"$regex": query_text, "$options": "i"}}
+            ]
+
         if transaction_type:
-            conditions.append(Transaction.transaction_type == transaction_type)
+            query["transaction_type"] = transaction_type
         if min_amount is not None:
-            conditions.append(Transaction.amount >= min_amount)
+            query.setdefault("amount", {})["$gte"] = min_amount
         if max_amount is not None:
-            conditions.append(Transaction.amount <= max_amount)
+            query.setdefault("amount", {})["$lte"] = max_amount
         if start_date:
-            conditions.append(Transaction.jalali_date >= start_date)
+            query.setdefault("jalali_date", {})["$gte"] = start_date
         if end_date:
-            conditions.append(Transaction.jalali_date <= end_date)
+            query.setdefault("jalali_date", {})["$lte"] = end_date
         if category:
-            conditions.append(Transaction.category == category)
+            query["category"] = category
         if party_name:
-            conditions.append(Transaction.party_name.ilike(f"%{party_name}%"))
-        
-        if conditions:
-            q = q.filter(and_(*conditions))
-        
-        return q.order_by(Transaction.id.desc()).limit(limit).all()
+            query["party_name"] = {"$regex": party_name, "$options": "i"}
+
+        result = []
+        for txn in transactions.find(query).sort("id", DESCENDING).limit(limit):
+            txn.pop("_id", None)
+            result.append(txn)
+        return result
 
 
 class CustomerRepository:
     """Customer CRUD operations."""
 
     @staticmethod
-    def create(session: Session, user_id: int, full_name: str,
+    def create(user_id: int, full_name: str,
                phone: str = None, address: str = None,
-               notes: str = None) -> Customer:
-        customer = Customer(
+               notes: str = None) -> Dict:
+        customers = get_collection("customers")
+        customer = create_customer_doc(
             user_id=user_id,
             full_name=full_name,
             phone=phone,
             address=address,
             notes=notes
         )
-        session.add(customer)
-        session.commit()
+        customers.insert_one(customer)
+        customer.pop("_id", None)
         return customer
 
     @staticmethod
-    def get_by_id(session: Session, customer_id: int) -> Optional[Customer]:
-        return session.query(Customer).filter_by(id=customer_id).first()
+    def get_by_id(customer_id: int) -> Optional[Dict]:
+        customers = get_collection("customers")
+        customer = customers.find_one({"id": customer_id})
+        if customer:
+            customer.pop("_id", None)
+        return customer
 
     @staticmethod
-    def get_by_user(session: Session, user_id: int) -> List[Customer]:
-        return session.query(Customer).filter_by(user_id=user_id).order_by(
-            Customer.full_name.asc()
-        ).all()
+    def get_by_user(user_id: int) -> List[Dict]:
+        customers = get_collection("customers")
+        result = []
+        for customer in customers.find({"user_id": user_id}).sort("full_name", ASCENDING):
+            customer.pop("_id", None)
+            result.append(customer)
+        return result
 
     @staticmethod
-    def search(session: Session, user_id: int, query: str) -> List[Customer]:
-        like_pattern = f"%{query}%"
-        return session.query(Customer).filter(
-            and_(
-                Customer.user_id == user_id,
-                or_(
-                    Customer.full_name.ilike(like_pattern),
-                    Customer.phone.ilike(like_pattern)
-                )
-            )
-        ).all()
+    def search(user_id: int, query: str) -> List[Dict]:
+        customers = get_collection("customers")
+        regex = {"$regex": query, "$options": "i"}
+        query_filter = {
+            "user_id": user_id,
+            "$or": [
+                {"full_name": regex},
+                {"phone": regex}
+            ]
+        }
+        result = []
+        for customer in customers.find(query_filter):
+            customer.pop("_id", None)
+            result.append(customer)
+        return result
 
     @staticmethod
-    def update(session: Session, customer_id: int,
-               full_name: str = None, phone: str = None,
+    def update(customer_id: int, full_name: str = None, phone: str = None,
                address: str = None, notes: str = None) -> bool:
-        customer = session.query(Customer).filter_by(id=customer_id).first()
-        if customer:
-            if full_name:
-                customer.full_name = full_name
-            if phone is not None:
-                customer.phone = phone
-            if address is not None:
-                customer.address = address
-            if notes is not None:
-                customer.notes = notes
-            session.commit()
-            return True
-        return False
+        customers = get_collection("customers")
+        update_data = {"updated_at": _utcnow()}
+        if full_name:
+            update_data["full_name"] = full_name
+        if phone is not None:
+            update_data["phone"] = phone
+        if address is not None:
+            update_data["address"] = address
+        if notes is not None:
+            update_data["notes"] = notes
+
+        result = customers.update_one(
+            {"id": customer_id},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
     @staticmethod
-    def delete(session: Session, customer_id: int) -> bool:
-        customer = session.query(Customer).filter_by(id=customer_id).first()
-        if customer:
-            session.delete(customer)
-            session.commit()
-            return True
-        return False
+    def delete(customer_id: int) -> bool:
+        customers = get_collection("customers")
+        result = customers.delete_one({"id": customer_id})
+        return result.deleted_count > 0
 
     @staticmethod
-    def update_financial_summary(session: Session, customer_id: int) -> bool:
+    def update_financial_summary(customer_id: int) -> bool:
         """Recalculate and update customer's total debt and receivable."""
-        customer = session.query(Customer).filter_by(id=customer_id).first()
-        if not customer:
-            return False
-        
-        total_debt = session.query(func.sum(Transaction.amount)).filter(
-            Transaction.customer_id == customer_id,
-            Transaction.transaction_type == 'debt',
-            Transaction.is_settled == False
-        ).scalar() or 0
-        
-        total_receivable = session.query(func.sum(Transaction.amount)).filter(
-            Transaction.customer_id == customer_id,
-            Transaction.transaction_type == 'receivable',
-            Transaction.is_settled == False
-        ).scalar() or 0
-        
-        customer.total_debt = float(total_debt)
-        customer.total_receivable = float(total_receivable)
-        session.commit()
-        return True
+        transactions = get_collection("transactions")
+        customers = get_collection("customers")
+
+        # Calculate total debt
+        debt_pipeline = [
+            {"$match": {
+                "customer_id": customer_id,
+                "transaction_type": "debt",
+                "is_settled": False
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]
+        debt_result = list(transactions.aggregate(debt_pipeline))
+        total_debt = float(debt_result[0]["total"]) if debt_result else 0.0
+
+        # Calculate total receivable
+        recv_pipeline = [
+            {"$match": {
+                "customer_id": customer_id,
+                "transaction_type": "receivable",
+                "is_settled": False
+            }},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]
+        recv_result = list(transactions.aggregate(recv_pipeline))
+        total_receivable = float(recv_result[0]["total"]) if recv_result else 0.0
+
+        result = customers.update_one(
+            {"id": customer_id},
+            {"$set": {
+                "total_debt": total_debt,
+                "total_receivable": total_receivable,
+                "updated_at": _utcnow()
+            }}
+        )
+        return result.modified_count > 0
 
 
 class ReminderRepository:
     """Reminder CRUD operations."""
 
     @staticmethod
-    def create(session: Session, user_id: int, reminder_type: str,
+    def create(user_id: int, reminder_type: str,
                title: str, reminder_jalali_date: str,
                message: str = None, transaction_id: int = None,
-               reminder_time: str = None) -> Reminder:
-        reminder = Reminder(
+               reminder_time: str = None) -> Dict:
+        reminders = get_collection("reminders")
+        reminder = create_reminder_doc(
             user_id=user_id,
-            transaction_id=transaction_id,
             reminder_type=reminder_type,
             title=title,
-            message=message,
             reminder_jalali_date=reminder_jalali_date,
+            message=message,
+            transaction_id=transaction_id,
             reminder_time=reminder_time
         )
-        session.add(reminder)
-        session.commit()
+        reminders.insert_one(reminder)
+        reminder.pop("_id", None)
         return reminder
 
     @staticmethod
-    def get_pending(session: Session, jalali_date: str) -> List[Reminder]:
-        return session.query(Reminder).filter(
-            Reminder.reminder_jalali_date <= jalali_date,
-            Reminder.is_sent == False
-        ).all()
+    def get_pending(jalali_date: str) -> List[Dict]:
+        reminders = get_collection("reminders")
+        query = {
+            "reminder_jalali_date": {"$lte": jalali_date},
+            "is_sent": False
+        }
+        result = []
+        for reminder in reminders.find(query):
+            reminder.pop("_id", None)
+            result.append(reminder)
+        return result
 
     @staticmethod
-    def mark_sent(session: Session, reminder_id: int) -> bool:
-        reminder = session.query(Reminder).filter_by(id=reminder_id).first()
-        if reminder:
-            reminder.is_sent = True
-            reminder.sent_at = datetime.now(timezone.utc)
-            session.commit()
-            return True
-        return False
+    def mark_sent(reminder_id: int) -> bool:
+        reminders = get_collection("reminders")
+        result = reminders.update_one(
+            {"id": reminder_id},
+            {"$set": {
+                "is_sent": True,
+                "sent_at": datetime.now(timezone.utc)
+            }}
+        )
+        return result.modified_count > 0
 
 
 class CardInfoRepository:
     """Card info (شماره کارت و شبا) CRUD operations."""
 
     @staticmethod
-    def create(session: Session, user_id: int, name: str,
+    def create(user_id: int, name: str,
                card_number: str = None, sheba: str = None,
-               customer_id: int = None, bank_name: str = None) -> CardInfo:
-        card = CardInfo(
+               customer_id: int = None, bank_name: str = None) -> Dict:
+        cards = get_collection("card_info")
+        card = create_card_info_doc(
             user_id=user_id,
             name=name,
             card_number=card_number,
@@ -455,131 +552,157 @@ class CardInfoRepository:
             customer_id=customer_id,
             bank_name=bank_name
         )
-        session.add(card)
-        session.commit()
+        cards.insert_one(card)
+        card.pop("_id", None)
         return card
 
     @staticmethod
-    def get_by_id(session: Session, card_id: int) -> Optional[CardInfo]:
-        return session.query(CardInfo).filter_by(id=card_id).first()
+    def get_by_id(card_id: int) -> Optional[Dict]:
+        cards = get_collection("card_info")
+        card = cards.find_one({"id": card_id})
+        if card:
+            card.pop("_id", None)
+        return card
 
     @staticmethod
-    def get_by_user(session: Session, user_id: int) -> List[CardInfo]:
-        return session.query(CardInfo).filter_by(user_id=user_id).order_by(
-            CardInfo.id.desc()
-        ).all()
+    def get_by_user(user_id: int) -> List[Dict]:
+        cards = get_collection("card_info")
+        result = []
+        for card in cards.find({"user_id": user_id}).sort("id", DESCENDING):
+            card.pop("_id", None)
+            result.append(card)
+        return result
 
     @staticmethod
-    def update(session: Session, card_id: int, name: str = None,
+    def update(card_id: int, name: str = None,
                card_number: str = None, sheba: str = None,
                customer_id: int = None, bank_name: str = None) -> bool:
-        card = session.query(CardInfo).filter_by(id=card_id).first()
-        if not card:
-            return False
+        cards = get_collection("card_info")
+        update_data = {"updated_at": _utcnow()}
         if name is not None:
-            card.name = name
+            update_data["name"] = name
         if card_number is not None:
-            card.card_number = card_number
+            update_data["card_number"] = card_number
         if sheba is not None:
-            card.sheba = sheba
+            update_data["sheba"] = sheba
         if customer_id is not None:
-            card.customer_id = customer_id
+            update_data["customer_id"] = customer_id
         if bank_name is not None:
-            card.bank_name = bank_name
-        session.commit()
-        return True
+            update_data["bank_name"] = bank_name
+
+        result = cards.update_one(
+            {"id": card_id},
+            {"$set": update_data}
+        )
+        return result.modified_count > 0
 
     @staticmethod
-    def delete(session: Session, card_id: int) -> bool:
-        card = session.query(CardInfo).filter_by(id=card_id).first()
-        if card:
-            session.delete(card)
-            session.commit()
-            return True
-        return False
+    def delete(card_id: int) -> bool:
+        cards = get_collection("card_info")
+        result = cards.delete_one({"id": card_id})
+        return result.deleted_count > 0
 
     @staticmethod
-    def search(session: Session, user_id: int, query: str) -> List[CardInfo]:
-        like_pattern = f"%{query}%"
-        return session.query(CardInfo).filter(
-            and_(
-                CardInfo.user_id == user_id,
-                or_(
-                    CardInfo.name.ilike(like_pattern),
-                    CardInfo.card_number.ilike(like_pattern),
-                    CardInfo.sheba.ilike(like_pattern)
-                )
-            )
-        ).all()
+    def search(user_id: int, query: str) -> List[Dict]:
+        cards = get_collection("card_info")
+        regex = {"$regex": query, "$options": "i"}
+        query_filter = {
+            "user_id": user_id,
+            "$or": [
+                {"name": regex},
+                {"card_number": regex},
+                {"sheba": regex}
+            ]
+        }
+        result = []
+        for card in cards.find(query_filter):
+            card.pop("_id", None)
+            result.append(card)
+        return result
 
 
 class BackupRepository:
     """Backup record CRUD operations."""
 
     @staticmethod
-    def create(session: Session, user_id: int, filename: str,
-               file_size: int, jalali_date: str, jalali_time: str = None) -> Backup:
-        backup = Backup(
+    def create(user_id: int, filename: str,
+               file_size: int, jalali_date: str,
+               jalali_time: str = None) -> Dict:
+        backups = get_collection("backups")
+        backup = create_backup_doc(
             user_id=user_id,
             filename=filename,
             file_size=file_size,
             jalali_date=jalali_date,
             jalali_time=jalali_time
         )
-        session.add(backup)
-        session.commit()
+        backups.insert_one(backup)
+        backup.pop("_id", None)
         return backup
 
     @staticmethod
-    def get_recent(session: Session, limit: int = 5) -> List[Backup]:
-        return session.query(Backup).order_by(
-            Backup.id.desc()
-        ).limit(limit).all()
+    def get_recent(limit: int = 5) -> List[Dict]:
+        backups = get_collection("backups")
+        result = []
+        for backup in backups.find().sort("id", DESCENDING).limit(limit):
+            backup.pop("_id", None)
+            result.append(backup)
+        return result
 
 
 class PaymentRepository:
     """Payment history CRUD operations for debts and receivables."""
 
     @staticmethod
-    def create(session: Session, transaction_id: int, user_id: int,
+    def create(transaction_id: int, user_id: int,
                amount: float, payment_type: str,
                jalali_date: str, jalali_time: str, jalali_full: str,
-               description: str = None, photo_path: str = None) -> Payment:
-        payment = Payment(
+               description: str = None, photo_path: str = None) -> Dict:
+        payments = get_collection("payments")
+        payment = create_payment_doc(
             transaction_id=transaction_id,
             user_id=user_id,
             amount=amount,
             payment_type=payment_type,
-            description=description,
-            photo_path=photo_path,
             jalali_date=jalali_date,
             jalali_time=jalali_time,
-            jalali_full=jalali_full
+            jalali_full=jalali_full,
+            description=description,
+            photo_path=photo_path
         )
-        session.add(payment)
-        session.commit()
+        payments.insert_one(payment)
+        payment.pop("_id", None)
         return payment
 
     @staticmethod
-    def get_by_transaction(session: Session, transaction_id: int) -> List[Payment]:
-        return session.query(Payment).filter_by(
-            transaction_id=transaction_id
-        ).order_by(Payment.created_at.asc()).all()
+    def get_by_transaction(transaction_id: int) -> List[Dict]:
+        payments = get_collection("payments")
+        result = []
+        for payment in payments.find({"transaction_id": transaction_id}).sort("created_at", ASCENDING):
+            payment.pop("_id", None)
+            result.append(payment)
+        return result
 
     @staticmethod
-    def get_total_paid(session: Session, transaction_id: int) -> float:
-        result = session.query(func.sum(Payment.amount)).filter(
-            Payment.transaction_id == transaction_id
-        ).scalar()
-        return float(result) if result else 0.0
+    def get_total_paid(transaction_id: int) -> float:
+        payments = get_collection("payments")
+        pipeline = [
+            {"$match": {"transaction_id": transaction_id}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+        ]
+        result = list(payments.aggregate(pipeline))
+        return float(result[0]["total"]) if result else 0.0
 
     @staticmethod
-    def get_remaining(session: Session, transaction_id: int, original_amount: float) -> float:
-        paid = PaymentRepository.get_total_paid(session, transaction_id)
+    def get_remaining(transaction_id: int, original_amount: float) -> float:
+        paid = PaymentRepository.get_total_paid(transaction_id)
         return max(0.0, original_amount - paid)
 
     @staticmethod
-    def get_by_user(session: Session, user_id: int, limit: int = 50) -> List[Payment]:
-        return session.query(Payment).filter_by(
-            user_id=user_id
-        ).order_by(Payment.id.desc()).limit(limit).all()
+    def get_by_user(user_id: int, limit: int = 50) -> List[Dict]:
+        payments = get_collection("payments")
+        result = []
+        for payment in payments.find({"user_id": user_id}).sort("id", DESCENDING).limit(limit):
+            payment.pop("_id", None)
+            result.append(payment)
+        return result

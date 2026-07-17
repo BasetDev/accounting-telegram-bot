@@ -5,7 +5,6 @@ import re
 import shutil
 import asyncio
 import time
-from sqlalchemy.orm import Session
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
@@ -16,12 +15,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ContentType
 from aiogram.types import ErrorEvent
 
-
-from app.database.models import init_database, Transaction, Payment
 from app.database.repository import (
     UserRepository, TransactionRepository, CustomerRepository,
     ReminderRepository, BackupRepository, CardInfoRepository, PaymentRepository
 )
+from app.database.models import get_collection
 from app.keyboards.markups import (
     main_menu, cancel_menu, back_menu, cancel_back_menu,
     customer_menu, customer_skip_menu, report_menu, income_categories, expense_categories,
@@ -66,7 +64,6 @@ from app.services.export_service import export_transactions_excel, export_transa
 
 router = Router()
 
-
 # ==============================
 # Logging Middleware
 # ==============================
@@ -74,7 +71,6 @@ router = Router()
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 from typing import Callable, Dict, Any, Awaitable
-
 
 class LoggingMiddleware(BaseMiddleware):
     """Middleware to log all incoming updates for debugging."""
@@ -102,11 +98,9 @@ class LoggingMiddleware(BaseMiddleware):
 
         return await handler(event, data)
 
-
 # Attach middleware to router
 router.message.middleware(LoggingMiddleware())
 router.callback_query.middleware(LoggingMiddleware())
-
 
 # ==============================
 # Global Error Handler
@@ -118,14 +112,12 @@ async def error_handler(event: ErrorEvent):
     logger.error(f"Unhandled error: {event.exception}", exc_info=True)
     return True
 
-
 async def safe_callback_answer(callback: CallbackQuery, text: str = "", show_alert: bool = False):
     """Safely answer a callback query, handling cases where the callback was already answered."""
     try:
         await callback.answer(text, show_alert=show_alert)
     except Exception as e:
         logger.debug(f"Could not answer callback (may have been already answered): {e}")
-
 
 def safe_parse_callback_id(callback: CallbackQuery, index: int = 1) -> int | None:
     """Safely parse an integer ID from callback data. Returns None if parsing fails."""
@@ -137,7 +129,6 @@ def safe_parse_callback_id(callback: CallbackQuery, index: int = 1) -> int | Non
         logger.debug(f"Could not parse callback data '{callback.data}' at index {index}: {e}")
     return None
 
-
 async def safe_edit(message, text, reply_markup=None, parse_mode=None):
     """Safely edit a message, handling cases where the message was deleted."""
     try:
@@ -146,14 +137,12 @@ async def safe_edit(message, text, reply_markup=None, parse_mode=None):
         logger.debug(f"Could not edit message (may have been deleted): {e}")
         await message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
-
 async def safe_delete(message):
     """Safely delete a message."""
     try:
         await message.delete()
     except Exception:
         pass
-
 
 # ==============================
 # FSM States
@@ -166,14 +155,12 @@ class IncomeForm(StatesGroup):
     photo = State()
     confirm = State()
 
-
 class ExpenseForm(StatesGroup):
     amount = State()
     description = State()
     category = State()
     photo = State()
     confirm = State()
-
 
 class DebtForm(StatesGroup):
     category = State()
@@ -192,7 +179,6 @@ class DebtForm(StatesGroup):
     customer_id = State()
     confirm = State()
 
-
 class ReceivableForm(StatesGroup):
     category = State()
     subcategory = State()
@@ -210,14 +196,12 @@ class ReceivableForm(StatesGroup):
     customer_id = State()
     confirm = State()
 
-
 class CustomerForm(StatesGroup):
     name = State()
     phone = State()
     address = State()
     notes = State()
     confirm = State()
-
 
 class CustomerEditForm(StatesGroup):
     select = State()
@@ -226,20 +210,16 @@ class CustomerEditForm(StatesGroup):
     address = State()
     notes = State()
 
-
 class CustomerDeleteForm(StatesGroup):
     select = State()
     confirm = State()
-
 
 class SearchForm(StatesGroup):
     query = State()
     transaction_type = State()
 
-
 class CustomerSearchForm(StatesGroup):
     query = State()
-
 
 class DebtEditForm(StatesGroup):
     edit_id = State()
@@ -251,7 +231,6 @@ class DebtEditForm(StatesGroup):
     confirm = State()
     delete_confirm = State()
 
-
 class ReceivableEditForm(StatesGroup):
     edit_id = State()
     amount = State()
@@ -261,7 +240,6 @@ class ReceivableEditForm(StatesGroup):
     photo = State()
     confirm = State()
     delete_confirm = State()
-
 
 class CardForm(StatesGroup):
     """Card and Sheba registration with name."""
@@ -273,7 +251,6 @@ class CardForm(StatesGroup):
     bank_name = State()
     confirm = State()
 
-
 class CardEditForm(StatesGroup):
     """Edit card info."""
     select = State()
@@ -281,15 +258,12 @@ class CardEditForm(StatesGroup):
     value = State()
     confirm = State()
 
-
 class CardDeleteForm(StatesGroup):
     select = State()
     confirm = State()
 
-
 class CardSearchForm(StatesGroup):
     query = State()
-
 
 class PaymentForm(StatesGroup):
     """FSM states for debt payment / receivable collection flow."""
@@ -300,33 +274,19 @@ class PaymentForm(StatesGroup):
     photo = State()
     confirm = State()
 
-
 # ==============================
 # Helper Functions
 # ==============================
 
-_SessionLocal = None
-
-
-def get_session() -> Session:
-    """Get a new database session."""
-    global _SessionLocal
-    if _SessionLocal is None:
-        _, _SessionLocal = init_database()
-    return _SessionLocal()
-
-
-def get_user(session: Session, message: Message):
+def get_user(message: Message):
     """Get or create user from Telegram message."""
     user = message.from_user
     return UserRepository.get_or_create(
-        session,
         telegram_id=user.id,
         username=user.username,
         first_name=user.first_name,
         last_name=user.last_name
     )
-
 
 async def _save_photo(bot: Bot, photo: PhotoSize, user_id: int) -> str:
     """Download and save a photo from Telegram. Returns the local file path."""
@@ -353,10 +313,9 @@ async def _save_photo(bot: Bot, photo: PhotoSize, user_id: int) -> str:
     logger.info(f"Photo saved: {filepath} ({os.path.getsize(filepath)} bytes)")
     return filepath
 
-
-def _build_dashboard_text(session: Session, user_id: int) -> str:
+def _build_dashboard_text(user_id: int) -> str:
     """Build the financial dashboard text."""
-    totals = TransactionRepository.get_total_by_type(session, user_id)
+    totals = TransactionRepository.get_total_by_type(user_id)
     
     income = totals["income"]
     expense = totals["expense"]
@@ -394,7 +353,6 @@ def _build_dashboard_text(session: Session, user_id: int) -> str:
 ——————————
 {status}"""
 
-
 # ==============================
 # Command Handlers
 # ==============================
@@ -402,13 +360,8 @@ def _build_dashboard_text(session: Session, user_id: int) -> str:
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     """Handle /start command."""
-    session = get_session()
-    try:
-        get_user(session, message)
-        await message.answer(WELCOME, reply_markup=main_menu())
-    finally:
-        session.close()
-
+    get_user(message)
+    await message.answer(WELCOME, reply_markup=main_menu())
 
 @router.message(Command("menu"))
 @router.message(F.text == "🔙 بازگشت به منو")
@@ -417,12 +370,10 @@ async def cmd_menu(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(MENU_TEXT, reply_markup=main_menu())
 
-
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """Handle /help command."""
     await message.answer(HELP, reply_markup=main_menu())
-
 
 # ==============================
 # Income Handlers
@@ -433,7 +384,6 @@ async def income_start(message: Message, state: FSMContext):
     """Start income registration flow."""
     await state.set_state(IncomeForm.amount)
     await message.answer(INCOME_AMOUNT, reply_markup=cancel_menu())
-
 
 @router.message(IncomeForm.amount)
 async def income_amount(message: Message, state: FSMContext):
@@ -453,7 +403,6 @@ async def income_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer(INVALID_AMOUNT)
 
-
 @router.message(IncomeForm.description)
 async def income_description(message: Message, state: FSMContext):
     """Handle income description."""
@@ -469,7 +418,6 @@ async def income_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await state.set_state(IncomeForm.category)
     await message.answer(INCOME_CATEGORY, reply_markup=income_categories())
-
 
 @router.message(IncomeForm.category)
 async def income_category(message: Message, state: FSMContext):
@@ -490,7 +438,6 @@ async def income_category(message: Message, state: FSMContext):
         "یا گزینه «⏭️ بدون عکس» را انتخاب کنید:",
         reply_markup=photo_skip_menu()
     )
-
 
 @router.message(IncomeForm.photo)
 async def income_photo(message: Message, state: FSMContext):
@@ -525,12 +472,10 @@ async def income_photo(message: Message, state: FSMContext):
     
     # Save transaction
     data = await state.get_data()
-    session = get_session()
     try:
-        user = get_user(session, message)
+        user = get_user(message)
         TransactionRepository.create(
-            session,
-            user_id=user.id,
+            user_id=user["id"],
             transaction_type="income",
             amount=data["amount"],
             description=data["description"],
@@ -540,7 +485,7 @@ async def income_photo(message: Message, state: FSMContext):
             jalali_time=get_jalali_time(),
             jalali_full=get_jalali_full()
         )
-        logger.info(f"Income recorded: {data['amount']} by user {user.telegram_id}")
+        logger.info(f"Income recorded: {data['amount']} by user {user['telegram_id']}")
         
         await state.clear()
         
@@ -552,9 +497,6 @@ async def income_photo(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error saving income: {e}")
         await message.answer(ERROR_GENERAL, reply_markup=main_menu())
-    finally:
-        session.close()
-
 
 # ==============================
 # Expense Handlers
@@ -565,7 +507,6 @@ async def expense_start(message: Message, state: FSMContext):
     """Start expense registration flow."""
     await state.set_state(ExpenseForm.amount)
     await message.answer(EXPENSE_AMOUNT, reply_markup=cancel_menu())
-
 
 @router.message(ExpenseForm.amount)
 async def expense_amount(message: Message, state: FSMContext):
@@ -585,7 +526,6 @@ async def expense_amount(message: Message, state: FSMContext):
     except ValueError:
         await message.answer(INVALID_AMOUNT)
 
-
 @router.message(ExpenseForm.description)
 async def expense_description(message: Message, state: FSMContext):
     """Handle expense description."""
@@ -601,7 +541,6 @@ async def expense_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await state.set_state(ExpenseForm.category)
     await message.answer(EXPENSE_CATEGORY, reply_markup=expense_categories())
-
 
 @router.message(ExpenseForm.category)
 async def expense_category(message: Message, state: FSMContext):
@@ -622,7 +561,6 @@ async def expense_category(message: Message, state: FSMContext):
         "یا گزینه «⏭️ بدون عکس» را انتخاب کنید:",
         reply_markup=photo_skip_menu()
     )
-
 
 @router.message(ExpenseForm.photo)
 async def expense_photo(message: Message, state: FSMContext):
@@ -657,12 +595,10 @@ async def expense_photo(message: Message, state: FSMContext):
     
     # Save transaction
     data = await state.get_data()
-    session = get_session()
     try:
-        user = get_user(session, message)
+        user = get_user(message)
         TransactionRepository.create(
-            session,
-            user_id=user.id,
+            user_id=user["id"],
             transaction_type="expense",
             amount=data["amount"],
             description=data["description"],
@@ -672,7 +608,7 @@ async def expense_photo(message: Message, state: FSMContext):
             jalali_time=get_jalali_time(),
             jalali_full=get_jalali_full()
         )
-        logger.info(f"Expense recorded: {data['amount']} by user {user.telegram_id}")
+        logger.info(f"Expense recorded: {data['amount']} by user {user['telegram_id']}")
         
         await state.clear()
         
@@ -684,9 +620,6 @@ async def expense_photo(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error saving expense: {e}")
         await message.answer(ERROR_GENERAL, reply_markup=main_menu())
-    finally:
-        session.close()
-
 
 # ==============================
 # Debt Handlers
@@ -699,7 +632,6 @@ async def debt_register_from_submenu(callback: CallbackQuery, state: FSMContext)
     await state.set_state(DebtForm.category)
     await callback.message.answer(DEBT_CATEGORY_PROMPT, reply_markup=debt_category_keyboard())
     await safe_callback_answer(callback)
-
 
 @router.callback_query(DebtForm.category, F.data.startswith("debt_cat:"))
 async def debt_category_selected(callback: CallbackQuery, state: FSMContext):
@@ -732,7 +664,6 @@ async def debt_category_selected(callback: CallbackQuery, state: FSMContext):
 
     await safe_callback_answer(callback)
 
-
 @router.callback_query(DebtForm.subcategory, F.data.startswith("debt_sub:"))
 async def debt_subcategory_selected(callback: CallbackQuery, state: FSMContext):
     """Handle debt subcategory selection."""
@@ -756,7 +687,6 @@ async def debt_subcategory_selected(callback: CallbackQuery, state: FSMContext):
     )
     await safe_callback_answer(callback)
 
-
 @router.message(DebtForm.amount)
 async def debt_amount(message: Message, state: FSMContext):
     """Handle debt amount."""
@@ -771,19 +701,14 @@ async def debt_amount(message: Message, state: FSMContext):
         await state.update_data(amount=amount)
         await state.set_state(DebtForm.party)
         # Get customer list
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            customers = CustomerRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        customers = CustomerRepository.get_by_user(user["id"])
         if customers:
             await message.answer(DEBT_PARTY, reply_markup=party_keyboard(customers))
         else:
             await message.answer(DEBT_PARTY + "\n\n💡 ابتدا از بخش «مدیریت مشتریان» مشتری اضافه کنید یا نام را دستی وارد کنید:", reply_markup=cancel_back_menu())
     except ValueError:
         await message.answer(INVALID_AMOUNT)
-
 
 @router.message(DebtForm.party)
 async def debt_party(message: Message, state: FSMContext):
@@ -801,7 +726,6 @@ async def debt_party(message: Message, state: FSMContext):
     await state.set_state(DebtForm.description)
     await message.answer(DEBT_DESC, reply_markup=cancel_back_menu())
 
-
 @router.message(DebtForm.description)
 async def debt_description(message: Message, state: FSMContext):
     """Handle debt description."""
@@ -817,7 +741,6 @@ async def debt_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await state.set_state(DebtForm.due_date)
     await message.answer(DEBT_DUE, reply_markup=due_date_keyboard())
-
 
 @router.message(DebtForm.due_date)
 async def debt_due_date(message: Message, state: FSMContext):
@@ -852,7 +775,6 @@ async def debt_due_date(message: Message, state: FSMContext):
         reply_markup=photo_skip_menu()
     )
 
-
 @router.message(DebtForm.photo)
 async def debt_photo(message: Message, state: FSMContext):
     """Handle debt photo upload and show card selection."""
@@ -885,15 +807,10 @@ async def debt_photo(message: Message, state: FSMContext):
     await state.update_data(photo_path=photo_path)
     
     # Step: Card number selection (optional)
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await state.set_state(DebtForm.card_select)
     await message.answer(CARD_INFO_DEBT_PROMPT, reply_markup=card_select_keyboard(cards))
-
 
 @router.message(DebtForm.card_select)
 async def debt_card_select(message: Message, state: FSMContext):
@@ -910,12 +827,8 @@ async def debt_card_select(message: Message, state: FSMContext):
     if message.text == "⏭️ رد کردن":
         await state.update_data(card_number=None)
         # Move to sheba selection
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         await state.set_state(DebtForm.sheba_select)
         await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
         return
@@ -926,37 +839,28 @@ async def debt_card_select(message: Message, state: FSMContext):
         return
 
     # Try to match selected card from existing cards
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        selected_card = None
-        for card in cards:
-            if not card.card_number:
-                continue
-            label = f"{card.name} | {card.card_number[-4:]}****"
-            if label == message.text:
-                selected_card = card
-                break
-        if selected_card:
-            await state.update_data(card_number=selected_card.card_number)
-            # Move to sheba selection
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            await state.set_state(DebtForm.sheba_select)
-            await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
-            return
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    selected_card = None
+    for card in cards:
+        if not card["card_number"]:
+            continue
+        label = f"{card["name"]} | {card["card_number"][-4:]}****"
+        if label == message.text:
+            selected_card = card
+            break
+    if selected_card:
+        await state.update_data(card_number=selected_card["card_number"])
+        # Move to sheba selection
+        cards = CardInfoRepository.get_by_user(user["id"])
+        await state.set_state(DebtForm.sheba_select)
+        await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
+        return
 
     # Unrecognized input - re-show the keyboard
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=card_select_keyboard(cards))
-
 
 @router.message(DebtForm.manual_card)
 async def debt_manual_card(message: Message, state: FSMContext):
@@ -967,12 +871,8 @@ async def debt_manual_card(message: Message, state: FSMContext):
         return
     if message.text == "🔙 بازگشت":
         # Go back to card_select
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         await state.set_state(DebtForm.card_select)
         await message.answer(CARD_INFO_DEBT_PROMPT, reply_markup=card_select_keyboard(cards))
         return
@@ -987,15 +887,10 @@ async def debt_manual_card(message: Message, state: FSMContext):
         await state.update_data(card_number=card_number)
 
     # Move to sheba selection
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await state.set_state(DebtForm.sheba_select)
     await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
-
 
 @router.message(DebtForm.sheba_select)
 async def debt_sheba_select(message: Message, state: FSMContext):
@@ -1012,13 +907,9 @@ async def debt_sheba_select(message: Message, state: FSMContext):
     if message.text == "⏭️ رد کردن":
         await state.update_data(sheba=None)
         # Move to bank name selection
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            bank_names = list({c.bank_name for c in cards if c.bank_name})
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
+        bank_names = list({c.bank_name for c in cards if c.bank_name})
         await state.set_state(DebtForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1029,41 +920,32 @@ async def debt_sheba_select(message: Message, state: FSMContext):
         return
 
     # Try to match selected sheba from existing cards
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        selected_card = None
-        for card in cards:
-            if not card.sheba:
-                continue
-            label = f"{card.name} | IR{card.sheba[-4:]}****"
-            if label == message.text:
-                selected_card = card
-                break
-        if selected_card:
-            sheba_val = selected_card.sheba
-            if sheba_val and not sheba_val.upper().startswith("IR"):
-                sheba_val = f"IR{sheba_val}"
-            await state.update_data(sheba=sheba_val)
-            # Move to bank name selection
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            bank_names = list({c.bank_name for c in cards if c.bank_name})
-            await state.set_state(DebtForm.bank_name_select)
-            await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
-            return
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    selected_card = None
+    for card in cards:
+        if not card["sheba"]:
+            continue
+        label = f"{card["name"]} | IR{card["sheba"][-4:]}****"
+        if label == message.text:
+            selected_card = card
+            break
+    if selected_card:
+        sheba_val = selected_card["sheba"]
+        if sheba_val and not sheba_val.upper().startswith("IR"):
+            sheba_val = f"IR{sheba_val}"
+        await state.update_data(sheba=sheba_val)
+        # Move to bank name selection
+        cards = CardInfoRepository.get_by_user(user["id"])
+        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        await state.set_state(DebtForm.bank_name_select)
+        await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
+        return
 
     # Unrecognized input - re-show the keyboard
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=sheba_select_keyboard(cards))
-
 
 @router.message(DebtForm.manual_sheba)
 async def debt_manual_sheba(message: Message, state: FSMContext):
@@ -1074,12 +956,8 @@ async def debt_manual_sheba(message: Message, state: FSMContext):
         return
     if message.text == "🔙 بازگشت":
         # Go back to sheba_select
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         await state.set_state(DebtForm.sheba_select)
         await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
         return
@@ -1096,16 +974,11 @@ async def debt_manual_sheba(message: Message, state: FSMContext):
         await state.update_data(sheba=f"IR{sheba_digits}")
 
     # Move to bank name selection
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    bank_names = list({c.bank_name for c in cards if c.bank_name})
     await state.set_state(DebtForm.bank_name_select)
     await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
-
 
 @router.message(DebtForm.bank_name_select)
 async def debt_bank_name_select(message: Message, state: FSMContext):
@@ -1137,15 +1010,10 @@ async def debt_bank_name_select(message: Message, state: FSMContext):
         return
 
     # Unrecognized input - re-show the keyboard
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    bank_names = list({c.bank_name for c in cards if c.bank_name})
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=bank_name_select_keyboard(bank_names))
-
 
 @router.message(DebtForm.manual_bank_name)
 async def debt_manual_bank_name(message: Message, state: FSMContext):
@@ -1156,13 +1024,9 @@ async def debt_manual_bank_name(message: Message, state: FSMContext):
         return
     if message.text == "🔙 بازگشت":
         # Go back to bank_name_select
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            bank_names = list({c.bank_name for c in cards if c.bank_name})
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
+        bank_names = list({c.bank_name for c in cards if c.bank_name})
         await state.set_state(DebtForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1173,7 +1037,6 @@ async def debt_manual_bank_name(message: Message, state: FSMContext):
         await state.update_data(bank_name=normalize_bank_name(message.text))
 
     await _show_debt_confirm(message, state)
-
 
 async def _show_debt_confirm(message: Message, state: FSMContext):
     """Show debt summary confirmation."""
@@ -1200,24 +1063,20 @@ async def _show_debt_confirm(message: Message, state: FSMContext):
     await message.answer(summary, reply_markup=confirm_keyboard())
     await state.set_state(DebtForm.confirm)
 
-
 @router.callback_query(DebtForm.confirm)
 async def debt_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle debt confirmation."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
             user = UserRepository.get_or_create(
-                session,
                 telegram_id=callback.from_user.id,
                 username=callback.from_user.username,
                 first_name=callback.from_user.first_name,
                 last_name=callback.from_user.last_name
             )
             TransactionRepository.create(
-                session,
-                user_id=user.id,
+                user_id=user["id"],
                 transaction_type="debt",
                 amount=data["amount"],
                 party_name=data["party"],
@@ -1234,7 +1093,7 @@ async def debt_confirm(callback: CallbackQuery, state: FSMContext):
                 jalali_time=get_jalali_time(),
                 jalali_full=get_jalali_full()
             )
-            logger.info(f"Debt recorded: {data['amount']} by user {user.telegram_id}")
+            logger.info(f"Debt recorded: {data['amount']} by user {user["telegram_id"]}")
             
             await state.clear()
             await callback.message.edit_text(f"{DEBT_SAVED}", reply_markup=None)
@@ -1242,15 +1101,12 @@ async def debt_confirm(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             logger.error(f"Error saving debt: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
         await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
     
     await safe_callback_answer(callback)
-
 
 # ==============================
 # Receivable Handlers
@@ -1263,7 +1119,6 @@ async def receivable_register_from_submenu(callback: CallbackQuery, state: FSMCo
     await state.set_state(ReceivableForm.category)
     await callback.message.answer(RECEIVABLE_CATEGORY_PROMPT, reply_markup=receivable_category_keyboard())
     await safe_callback_answer(callback)
-
 
 @router.callback_query(ReceivableForm.category, F.data.startswith("recv_cat:"))
 async def receivable_category_selected(callback: CallbackQuery, state: FSMContext):
@@ -1296,7 +1151,6 @@ async def receivable_category_selected(callback: CallbackQuery, state: FSMContex
 
     await safe_callback_answer(callback)
 
-
 @router.callback_query(ReceivableForm.subcategory, F.data.startswith("recv_sub:"))
 async def receivable_subcategory_selected(callback: CallbackQuery, state: FSMContext):
     """Handle receivable subcategory selection."""
@@ -1320,7 +1174,6 @@ async def receivable_subcategory_selected(callback: CallbackQuery, state: FSMCon
     )
     await safe_callback_answer(callback)
 
-
 @router.message(ReceivableForm.amount)
 async def receivable_amount(message: Message, state: FSMContext):
     """Handle receivable amount."""
@@ -1335,19 +1188,14 @@ async def receivable_amount(message: Message, state: FSMContext):
         await state.update_data(amount=amount)
         await state.set_state(ReceivableForm.party)
         # Get customer list
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            customers = CustomerRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        customers = CustomerRepository.get_by_user(user["id"])
         if customers:
             await message.answer(RECEIVABLE_PARTY, reply_markup=party_keyboard(customers))
         else:
             await message.answer(RECEIVABLE_PARTY + "\n\n💡 ابتدا از بخش «مدیریت مشتریان» مشتری اضافه کنید یا نام را دستی وارد کنید:", reply_markup=cancel_back_menu())
     except ValueError:
         await message.answer(INVALID_AMOUNT)
-
 
 @router.message(ReceivableForm.party)
 async def receivable_party(message: Message, state: FSMContext):
@@ -1365,7 +1213,6 @@ async def receivable_party(message: Message, state: FSMContext):
     await state.set_state(ReceivableForm.description)
     await message.answer(RECEIVABLE_DESC, reply_markup=cancel_back_menu())
 
-
 @router.message(ReceivableForm.description)
 async def receivable_description(message: Message, state: FSMContext):
     """Handle receivable description."""
@@ -1381,7 +1228,6 @@ async def receivable_description(message: Message, state: FSMContext):
     await state.update_data(description=message.text)
     await state.set_state(ReceivableForm.due_date)
     await message.answer(RECEIVABLE_DUE, reply_markup=due_date_keyboard())
-
 
 @router.message(ReceivableForm.due_date)
 async def receivable_due_date(message: Message, state: FSMContext):
@@ -1415,7 +1261,6 @@ async def receivable_due_date(message: Message, state: FSMContext):
         reply_markup=photo_skip_menu()
     )
 
-
 @router.message(ReceivableForm.photo)
 async def receivable_photo(message: Message, state: FSMContext):
     """Handle receivable photo upload and show card selection."""
@@ -1448,15 +1293,10 @@ async def receivable_photo(message: Message, state: FSMContext):
     await state.update_data(photo_path=photo_path)
     
     # Step: Card number selection (optional)
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await state.set_state(ReceivableForm.card_select)
     await message.answer(CARD_INFO_RECV_PROMPT, reply_markup=card_select_keyboard(cards))
-
 
 @router.message(ReceivableForm.card_select)
 async def receivable_card_select(message: Message, state: FSMContext):
@@ -1473,12 +1313,8 @@ async def receivable_card_select(message: Message, state: FSMContext):
     if message.text == "⏭️ رد کردن":
         await state.update_data(card_number=None)
         # Move to sheba selection
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         await state.set_state(ReceivableForm.sheba_select)
         await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
         return
@@ -1489,37 +1325,28 @@ async def receivable_card_select(message: Message, state: FSMContext):
         return
 
     # Try to match selected card from existing cards
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        selected_card = None
-        for card in cards:
-            if not card.card_number:
-                continue
-            label = f"{card.name} | {card.card_number[-4:]}****"
-            if label == message.text:
-                selected_card = card
-                break
-        if selected_card:
-            await state.update_data(card_number=selected_card.card_number)
-            # Move to sheba selection
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            await state.set_state(ReceivableForm.sheba_select)
-            await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
-            return
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    selected_card = None
+    for card in cards:
+        if not card["card_number"]:
+            continue
+        label = f"{card["name"]} | {card["card_number"][-4:]}****"
+        if label == message.text:
+            selected_card = card
+            break
+    if selected_card:
+        await state.update_data(card_number=selected_card["card_number"])
+        # Move to sheba selection
+        cards = CardInfoRepository.get_by_user(user["id"])
+        await state.set_state(ReceivableForm.sheba_select)
+        await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
+        return
 
     # Unrecognized input - re-show the keyboard
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=card_select_keyboard(cards))
-
 
 @router.message(ReceivableForm.manual_card)
 async def receivable_manual_card(message: Message, state: FSMContext):
@@ -1530,12 +1357,8 @@ async def receivable_manual_card(message: Message, state: FSMContext):
         return
     if message.text == "🔙 بازگشت":
         # Go back to card_select
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         await state.set_state(ReceivableForm.card_select)
         await message.answer(CARD_INFO_RECV_PROMPT, reply_markup=card_select_keyboard(cards))
         return
@@ -1550,15 +1373,10 @@ async def receivable_manual_card(message: Message, state: FSMContext):
         await state.update_data(card_number=card_number)
 
     # Move to sheba selection
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await state.set_state(ReceivableForm.sheba_select)
     await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
-
 
 @router.message(ReceivableForm.sheba_select)
 async def receivable_sheba_select(message: Message, state: FSMContext):
@@ -1575,13 +1393,9 @@ async def receivable_sheba_select(message: Message, state: FSMContext):
     if message.text == "⏭️ رد کردن":
         await state.update_data(sheba=None)
         # Move to bank name selection
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            bank_names = list({c.bank_name for c in cards if c.bank_name})
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
+        bank_names = list({c.bank_name for c in cards if c.bank_name})
         await state.set_state(ReceivableForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1592,41 +1406,32 @@ async def receivable_sheba_select(message: Message, state: FSMContext):
         return
 
     # Try to match selected sheba from existing cards
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        selected_card = None
-        for card in cards:
-            if not card.sheba:
-                continue
-            label = f"{card.name} | IR{card.sheba[-4:]}****"
-            if label == message.text:
-                selected_card = card
-                break
-        if selected_card:
-            sheba_val = selected_card.sheba
-            if sheba_val and not sheba_val.upper().startswith("IR"):
-                sheba_val = f"IR{sheba_val}"
-            await state.update_data(sheba=sheba_val)
-            # Move to bank name selection
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            bank_names = list({c.bank_name for c in cards if c.bank_name})
-            await state.set_state(ReceivableForm.bank_name_select)
-            await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
-            return
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    selected_card = None
+    for card in cards:
+        if not card["sheba"]:
+            continue
+        label = f"{card["name"]} | IR{card["sheba"][-4:]}****"
+        if label == message.text:
+            selected_card = card
+            break
+    if selected_card:
+        sheba_val = selected_card["sheba"]
+        if sheba_val and not sheba_val.upper().startswith("IR"):
+            sheba_val = f"IR{sheba_val}"
+        await state.update_data(sheba=sheba_val)
+        # Move to bank name selection
+        cards = CardInfoRepository.get_by_user(user["id"])
+        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        await state.set_state(ReceivableForm.bank_name_select)
+        await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
+        return
 
     # Unrecognized input - re-show the keyboard
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=sheba_select_keyboard(cards))
-
 
 @router.message(ReceivableForm.manual_sheba)
 async def receivable_manual_sheba(message: Message, state: FSMContext):
@@ -1637,12 +1442,8 @@ async def receivable_manual_sheba(message: Message, state: FSMContext):
         return
     if message.text == "🔙 بازگشت":
         # Go back to sheba_select
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         await state.set_state(ReceivableForm.sheba_select)
         await message.answer(SHEBA_SELECT_PROMPT, reply_markup=sheba_select_keyboard(cards))
         return
@@ -1659,16 +1460,11 @@ async def receivable_manual_sheba(message: Message, state: FSMContext):
         await state.update_data(sheba=f"IR{sheba_digits}")
 
     # Move to bank name selection
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    bank_names = list({c.bank_name for c in cards if c.bank_name})
     await state.set_state(ReceivableForm.bank_name_select)
     await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
-
 
 @router.message(ReceivableForm.bank_name_select)
 async def receivable_bank_name_select(message: Message, state: FSMContext):
@@ -1700,15 +1496,10 @@ async def receivable_bank_name_select(message: Message, state: FSMContext):
         return
 
     # Unrecognized input - re-show the keyboard
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    bank_names = list({c.bank_name for c in cards if c.bank_name})
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=bank_name_select_keyboard(bank_names))
-
 
 @router.message(ReceivableForm.manual_bank_name)
 async def receivable_manual_bank_name(message: Message, state: FSMContext):
@@ -1719,13 +1510,9 @@ async def receivable_manual_bank_name(message: Message, state: FSMContext):
         return
     if message.text == "🔙 بازگشت":
         # Go back to bank_name_select
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            cards = CardInfoRepository.get_by_user(session, user.id)
-            bank_names = list({c.bank_name for c in cards if c.bank_name})
-        finally:
-            session.close()
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
+        bank_names = list({c.bank_name for c in cards if c.bank_name})
         await state.set_state(ReceivableForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1736,7 +1523,6 @@ async def receivable_manual_bank_name(message: Message, state: FSMContext):
         await state.update_data(bank_name=normalize_bank_name(message.text))
 
     await _show_receivable_confirm(message, state)
-
 
 async def _show_receivable_confirm(message: Message, state: FSMContext):
     """Show receivable summary confirmation."""
@@ -1758,24 +1544,20 @@ async def _show_receivable_confirm(message: Message, state: FSMContext):
     await message.answer(summary, reply_markup=confirm_keyboard())
     await state.set_state(ReceivableForm.confirm)
 
-
 @router.callback_query(ReceivableForm.confirm)
 async def receivable_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle receivable confirmation."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
             user = UserRepository.get_or_create(
-                session,
                 telegram_id=callback.from_user.id,
                 username=callback.from_user.username,
                 first_name=callback.from_user.first_name,
                 last_name=callback.from_user.last_name
             )
             TransactionRepository.create(
-                session,
-                user_id=user.id,
+                user_id=user["id"],
                 transaction_type="receivable",
                 amount=data["amount"],
                 party_name=data["party"],
@@ -1792,7 +1574,7 @@ async def receivable_confirm(callback: CallbackQuery, state: FSMContext):
                 jalali_time=get_jalali_time(),
                 jalali_full=get_jalali_full()
             )
-            logger.info(f"Receivable recorded: {data['amount']} by user {user.telegram_id}")
+            logger.info(f"Receivable recorded: {data['amount']} by user {user["telegram_id"]}")
             
             await state.clear()
             await callback.message.edit_text(RECEIVABLE_SAVED, reply_markup=None)
@@ -1800,8 +1582,6 @@ async def receivable_confirm(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             logger.error(f"Error saving receivable: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
@@ -1809,77 +1589,71 @@ async def receivable_confirm(callback: CallbackQuery, state: FSMContext):
     
     await safe_callback_answer(callback)
 
-
 # ==============================
 # Debt and Receivable Edit Handlers (Inline Button)
 # ==============================
 
 async def _start_edit_by_id(target_id: int, user_id: int, state: FSMContext, edit_form_class, text_prefix: str, callback_or_message):
     """Start edit flow for a debt or receivable by its transaction ID."""
-    session = get_session()
-    try:
-        txn = TransactionRepository.get_by_id(session, target_id)
+    txn = TransactionRepository.get_by_id( target_id)
         
-        if not txn or txn.user_id != user_id:
-            msg = "⚠️ تراکنشی با این شناسه یافت نشد."
-            if isinstance(callback_or_message, CallbackQuery):
-                await callback_or_message.answer(msg, show_alert=True)
-            else:
-                await callback_or_message.answer(msg)
-            return
-        
-        # Check type matches
-        expected_type = "debt" if edit_form_class == DebtEditForm else "receivable"
-        if txn.transaction_type != expected_type:
-            msg = f"⚠️ این شناسه مربوط به {'بدهی' if expected_type == 'receivable' else 'طلب'} است."
-            if isinstance(callback_or_message, CallbackQuery):
-                await callback_or_message.answer(msg, show_alert=True)
-            else:
-                await callback_or_message.answer(msg)
-            return
-        
-        await state.update_data(
-            edit_id=txn.id,
-            amount=txn.amount,
-            party=txn.party_name or "",
-            description=txn.description or "",
-            due_date=txn.due_jalali_date or "",
-            due_time=txn.due_jalali_time or "",
-            category=txn.category or "",
-            subcategory=txn.subcategory or "",
-            photo_path=txn.photo_path,
-            edit_type=expected_type,
-        )
-        
-        # Show current values and field selection
-        due_display = txn.due_jalali_date or '-'
-        if txn.due_jalali_time:
-            due_display += f" ساعت {txn.due_jalali_time}"
-        cat_display = txn.category or '-'
-        if txn.subcategory:
-            cat_display += f" / {txn.subcategory}"
-        photo_display = "✅ دارد" if txn.photo_path else "❌ ندارد"
-        summary = (
-            f"✏️ ویرایش {text_prefix} (شناسه: {txn.id})\n\n"
-            f"🏷 دسته: {cat_display}\n"
-            f"💰 مبلغ فعلی: {format_amount(txn.amount)} تومان\n"
-            f"👤 طرف حساب: {txn.party_name or '-'}\n"
-            f"📝 توضیحات: {txn.description or '-'}\n"
-            f"📅 سررسید: {due_display}\n"
-            f"📸 عکس: {photo_display}\n\n"
-            f"فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:"
-        )
-        
+    if not txn or txn["user_id"] != user_id:
+        msg = "⚠️ تراکنشی با این شناسه یافت نشد."
         if isinstance(callback_or_message, CallbackQuery):
-            await callback_or_message.message.edit_text(summary, reply_markup=edit_field_keyboard())
-            await callback_or_message.answer()
+            await callback_or_message.answer(msg, show_alert=True)
         else:
-            await callback_or_message.answer(summary, reply_markup=edit_field_keyboard())
+            await callback_or_message.answer(msg)
+        return
         
-        await state.set_state(edit_form_class.edit_id)
-    finally:
-        session.close()
-
+    # Check type matches
+    expected_type = "debt" if edit_form_class == DebtEditForm else "receivable"
+    if txn["transaction_type"] != expected_type:
+        msg = f"⚠️ این شناسه مربوط به {'بدهی' if expected_type == 'receivable' else 'طلب'} است."
+        if isinstance(callback_or_message, CallbackQuery):
+            await callback_or_message.answer(msg, show_alert=True)
+        else:
+            await callback_or_message.answer(msg)
+        return
+        
+    await state.update_data(
+        edit_id=txn["id"],
+        amount=txn["amount"],
+        party=txn["party_name"] or "",
+        description=txn["description"] or "",
+        due_date=txn["due_jalali_date"] or "",
+        due_time=txn["due_jalali_time"] or "",
+        category=txn["category"] or "",
+        subcategory=txn["subcategory"] or "",
+        photo_path=txn["photo_path"],
+        edit_type=expected_type,
+    )
+        
+    # Show current values and field selection
+    due_display = txn["due_jalali_date"] or '-'
+    if txn["due_jalali_time"]:
+        due_display += f" ساعت {txn["due_jalali_time"]}"
+    cat_display = txn["category"] or '-'
+    if txn["subcategory"]:
+        cat_display += f" / {txn["subcategory"]}"
+    photo_display = "✅ دارد" if txn["photo_path"] else "❌ ندارد"
+    summary = (
+        f"✏️ ویرایش {text_prefix} (شناسه: {txn["id"]})\n\n"
+        f"🏷 دسته: {cat_display}\n"
+        f"💰 مبلغ فعلی: {format_amount(txn["amount"])} تومان\n"
+        f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
+        f"📝 توضیحات: {txn["description"] or '-'}\n"
+        f"📅 سررسید: {due_display}\n"
+        f"📸 عکس: {photo_display}\n\n"
+        f"فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:"
+    )
+        
+    if isinstance(callback_or_message, CallbackQuery):
+        await callback_or_message.message.edit_text(summary, reply_markup=edit_field_keyboard())
+        await callback_or_message.answer()
+    else:
+        await callback_or_message.answer(summary, reply_markup=edit_field_keyboard())
+        
+    await state.set_state(edit_form_class.edit_id)
 
 # --- Callback: Edit button pressed in list ---
 
@@ -1890,16 +1664,11 @@ async def debt_edit_callback(callback: CallbackQuery, state: FSMContext):
     if txn_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
-            return
-        await _start_edit_by_id(txn_id, user.id, state, DebtEditForm, "بدهی", callback)
-    finally:
-        session.close()
-
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
+        return
+    await _start_edit_by_id(txn_id, user["id"], state, DebtEditForm, "بدهی", callback)
 
 @router.callback_query(F.data.startswith("edit_receivable:"))
 async def receivable_edit_callback(callback: CallbackQuery, state: FSMContext):
@@ -1908,16 +1677,11 @@ async def receivable_edit_callback(callback: CallbackQuery, state: FSMContext):
     if txn_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
-            return
-        await _start_edit_by_id(txn_id, user.id, state, ReceivableEditForm, "طلب", callback)
-    finally:
-        session.close()
-
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
+        return
+    await _start_edit_by_id(txn_id, user["id"], state, ReceivableEditForm, "طلب", callback)
 
 # --- Callback: Field selection for edit ---
 
@@ -2030,7 +1794,6 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
     
     await safe_callback_answer(callback)
 
-
 # --- Message handlers for each edit field ---
 
 @router.message(DebtEditForm.amount)
@@ -2065,7 +1828,6 @@ async def edit_amount_handler(message: Message, state: FSMContext):
     form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
     await state.set_state(form_class.edit_id)
 
-
 @router.message(DebtEditForm.party)
 @router.message(ReceivableEditForm.party)
 async def edit_party_handler(message: Message, state: FSMContext):
@@ -2091,7 +1853,6 @@ async def edit_party_handler(message: Message, state: FSMContext):
     form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
     await state.set_state(form_class.edit_id)
 
-
 @router.message(DebtEditForm.description)
 @router.message(ReceivableEditForm.description)
 async def edit_description_handler(message: Message, state: FSMContext):
@@ -2116,7 +1877,6 @@ async def edit_description_handler(message: Message, state: FSMContext):
     edit_type = data.get("edit_type", "debt")
     form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
     await state.set_state(form_class.edit_id)
-
 
 @router.message(DebtEditForm.due_date)
 @router.message(ReceivableEditForm.due_date)
@@ -2147,7 +1907,6 @@ async def edit_due_date_handler(message: Message, state: FSMContext):
     edit_type = data.get("edit_type", "debt")
     form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
     await state.set_state(form_class.edit_id)
-
 
 @router.message(DebtEditForm.photo)
 @router.message(ReceivableEditForm.photo)
@@ -2226,7 +1985,6 @@ async def edit_photo_handler(message: Message, state: FSMContext):
         reply_markup=edit_photo_keyboard(has_photo)
     )
 
-
 # --- Category edit callbacks ---
 
 @router.callback_query(F.data.startswith("debt_cat:"), DebtEditForm.edit_id)
@@ -2261,7 +2019,6 @@ async def edit_debt_category_selected(callback: CallbackQuery, state: FSMContext
 
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("debt_sub:"), DebtEditForm.edit_id)
 async def edit_debt_subcategory_selected(callback: CallbackQuery, state: FSMContext):
     """Handle debt subcategory selection during edit."""
@@ -2284,7 +2041,6 @@ async def edit_debt_subcategory_selected(callback: CallbackQuery, state: FSMCont
     )
     await state.set_state(DebtEditForm.edit_id)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_cat:"), ReceivableEditForm.edit_id)
 async def edit_receivable_category_selected(callback: CallbackQuery, state: FSMContext):
@@ -2318,7 +2074,6 @@ async def edit_receivable_category_selected(callback: CallbackQuery, state: FSMC
 
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("recv_sub:"), ReceivableEditForm.edit_id)
 async def edit_receivable_subcategory_selected(callback: CallbackQuery, state: FSMContext):
     """Handle receivable subcategory selection during edit."""
@@ -2342,7 +2097,6 @@ async def edit_receivable_subcategory_selected(callback: CallbackQuery, state: F
     await state.set_state(ReceivableEditForm.edit_id)
     await safe_callback_answer(callback)
 
-
 # --- Confirm edit ---
 
 @router.callback_query(DebtEditForm.confirm)
@@ -2350,21 +2104,17 @@ async def debt_edit_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle debt edit confirmation."""
     await _process_edit_confirm(callback, state, "بدهی")
 
-
 @router.callback_query(ReceivableEditForm.confirm)
 async def receivable_edit_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle receivable edit confirmation."""
     await _process_edit_confirm(callback, state, "طلب")
 
-
 async def _process_edit_confirm(callback: CallbackQuery, state: FSMContext, text_type: str):
     """Handle edit confirmation and save."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
             user = UserRepository.get_or_create(
-                session,
                 telegram_id=callback.from_user.id,
                 username=callback.from_user.username,
                 first_name=callback.from_user.first_name,
@@ -2382,8 +2132,8 @@ async def _process_edit_confirm(callback: CallbackQuery, state: FSMContext, text
                 'photo_path': data.get('photo_path'),
             }
             
-            TransactionRepository.update(session, data['edit_id'], **update_kwargs)
-            logger.info(f"{text_type} updated: {data['edit_id']} by user {user.telegram_id}")
+            TransactionRepository.update( data['edit_id'], **update_kwargs)
+            logger.info(f"{text_type} updated: {data['edit_id']} by user {user["telegram_id"]}")
             
             await state.clear()
             type_emoji = "📋" if text_type == "بدهی" else "📌"
@@ -2392,15 +2142,12 @@ async def _process_edit_confirm(callback: CallbackQuery, state: FSMContext, text
         except Exception as e:
             logger.error(f"Error updating {text_type}: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
         await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
     
     await safe_callback_answer(callback)
-
 
 # --- Delete handlers ---
 
@@ -2419,7 +2166,6 @@ async def debt_delete_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(DebtEditForm.delete_confirm)
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("delete_receivable:"))
 async def receivable_delete_callback(callback: CallbackQuery, state: FSMContext):
     """Handle delete button press in receivable list."""
@@ -2435,15 +2181,12 @@ async def receivable_delete_callback(callback: CallbackQuery, state: FSMContext)
     await state.set_state(ReceivableEditForm.delete_confirm)
     await safe_callback_answer(callback)
 
-
 async def _process_delete_confirm(callback: CallbackQuery, state: FSMContext, text_type: str, type_emoji: str):
     """Handle delete confirmation and execute deletion."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
             user = UserRepository.get_or_create(
-                session,
                 telegram_id=callback.from_user.id,
                 username=callback.from_user.username,
                 first_name=callback.from_user.first_name,
@@ -2452,8 +2195,8 @@ async def _process_delete_confirm(callback: CallbackQuery, state: FSMContext, te
             
             delete_id = data.get("delete_id")
             if delete_id:
-                TransactionRepository.delete(session, delete_id)
-                logger.info(f"{text_type} deleted: {delete_id} by user {user.telegram_id}")
+                TransactionRepository.delete( delete_id)
+                logger.info(f"{text_type} deleted: {delete_id} by user {user["telegram_id"]}")
             
             await state.clear()
             await callback.message.edit_text(f"🗑 {type_emoji} {text_type} با موفقیت حذف شد!", reply_markup=None)
@@ -2461,8 +2204,6 @@ async def _process_delete_confirm(callback: CallbackQuery, state: FSMContext, te
         except Exception as e:
             logger.error(f"Error deleting {text_type}: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
@@ -2470,24 +2211,21 @@ async def _process_delete_confirm(callback: CallbackQuery, state: FSMContext, te
     
     await safe_callback_answer(callback)
 
-
 @router.callback_query(DebtEditForm.delete_confirm)
 async def debt_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle debt delete confirmation."""
     await _process_delete_confirm(callback, state, "بدهی", "📋")
-
 
 @router.callback_query(ReceivableEditForm.delete_confirm)
 async def receivable_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle receivable delete confirmation."""
     await _process_delete_confirm(callback, state, "طلب", "📌")
 
-
 # ==============================
 # Debt & Receivable Submenus & Filtered Lists
 # ==============================
 
-def _group_receivables_by_customer(txns: list, session=None) -> list:
+def _group_receivables_by_customer(txns: list) -> list:
     """Group receivable transactions by customer (party_name).
 
     Returns a sorted list of dicts:
@@ -2505,33 +2243,32 @@ def _group_receivables_by_customer(txns: list, session=None) -> list:
     today = get_jalali_date()
     groups = {}
     for txn in txns:
-        key = txn.party_name or "-"
+        key = txn["party_name"] or "-"
         if key not in groups:
             groups[key] = {
                 "party": key, "total": 0, "remaining": 0,
                 "count": 0, "active_count": 0, "settled_count": 0,
                 "overdue_count": 0, "txns": []
             }
-        groups[key]["total"] += txn.amount
+        groups[key]["total"] += txn["amount"]
         groups[key]["count"] += 1
-        rem = txn.amount
-        if session and not txn.is_settled:
-            rem = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-        if txn.is_settled:
+        rem = txn["amount"]
+        if not txn["is_settled"]:
+            rem = PaymentRepository.get_remaining(txn["id"], txn["amount"])
+        if txn["is_settled"]:
             groups[key]["settled_count"] += 1
         else:
             groups[key]["active_count"] += 1
             groups[key]["remaining"] += rem
-            if txn.due_jalali_date and txn.due_jalali_date < today:
+            if txn["due_jalali_date"] and txn["due_jalali_date"] < today:
                 groups[key]["overdue_count"] += 1
         groups[key]["txns"].append(txn)
 
     for g in groups.values():
-        g["txns"].sort(key=lambda t: t.id, reverse=True)
+        g["txns"].sort(key=lambda t: t["id"], reverse=True)
 
     result = sorted(groups.values(), key=lambda g: (-g["remaining"], -g["count"]))
     return result
-
 
 def _build_customer_group_text(group: dict) -> str:
     """Build formatted text for a single customer's receivable summary (parent node)."""
@@ -2560,8 +2297,7 @@ def _build_customer_group_text(group: dict) -> str:
         text += f"\n✅ تسویه شده"
     return text
 
-
-def _build_customer_detail_text(group: dict, session=None) -> str:
+def _build_customer_detail_text(group: dict) -> str:
     """Build detailed chronological view of a customer's receivables (newest first)."""
     party = group["party"]
     txns = group["txns"]
@@ -2589,10 +2325,10 @@ def _build_customer_detail_text(group: dict, session=None) -> str:
     text += "\n——————————"
 
     for txn in txns:
-        if txn.is_settled:
+        if txn["is_settled"]:
             icon = "✅"
-        elif txn.due_jalali_date:
-            days_left = get_days_until(txn.due_jalali_date)
+        elif txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
             if days_left < 0:
                 icon = "🔴"
             elif days_left == 0:
@@ -2602,35 +2338,34 @@ def _build_customer_detail_text(group: dict, session=None) -> str:
         else:
             icon = "⏳"
 
-        text += f"\n\n{icon} #{txn.id} | {format_amount(txn.amount)} تومان"
-        if not txn.is_settled and session:
-            rem = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            if rem != txn.amount:
+        text += f"\n\n{icon} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        if not txn["is_settled"]:
+            rem = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+            if rem != txn["amount"]:
                 text += f"\n   💰 باقی‌مانده: {format_amount(rem)} تومان"
-        if txn.category:
-            cat_str = txn.category
-            if txn.subcategory:
-                cat_str += f" / {txn.subcategory}"
+        if txn["category"]:
+            cat_str = txn["category"]
+            if txn["subcategory"]:
+                cat_str += f" / {txn["subcategory"]}"
             text += f"\n   🏷 {cat_str}"
-        if txn.description:
-            text += f"\n   📝 {txn.description}"
-        if txn.due_jalali_date:
-            days_left = get_days_until(txn.due_jalali_date)
-            time_str = f" ساعت {txn.due_jalali_time}" if txn.due_jalali_time else ""
-            if txn.is_settled:
-                text += f"\n   📅 سررسید: {txn.due_jalali_date}{time_str}"
+        if txn["description"]:
+            text += f"\n   📝 {txn["description"]}"
+        if txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            time_str = f" ساعت {txn["due_jalali_time"]}" if txn["due_jalali_time"] else ""
+            if txn["is_settled"]:
+                text += f"\n   📅 سررسید: {txn["due_jalali_date"]}{time_str}"
             elif days_left < 0:
-                text += f"\n   🔴 سررسید: {txn.due_jalali_date}{time_str} (منقضی)"
+                text += f"\n   🔴 سررسید: {txn["due_jalali_date"]}{time_str} (منقضی)"
             elif days_left == 0:
-                text += f"\n   🟡 سررسید: {txn.due_jalali_date}{time_str} (امروز)"
+                text += f"\n   🟡 سررسید: {txn["due_jalali_date"]}{time_str} (امروز)"
             else:
-                text += f"\n   🟢 سررسید: {txn.due_jalali_date}{time_str} ({days_left} روز)"
-        text += f"\n   📅 ثبت: {txn.jalali_date}"
+                text += f"\n   🟢 سررسید: {txn["due_jalali_date"]}{time_str} ({days_left} روز)"
+        text += f"\n   📅 ثبت: {txn["jalali_date"]}"
 
     return text
 
-
-def _build_txn_list_text(txns: list, txn_type: str, title: str, session=None) -> tuple:
+def _build_txn_list_text(txns: list, txn_type: str, title: str) -> tuple:
     """Build formatted text for a list of debt/receivable transactions.
     
     Returns: (lines, total, total_remaining, remaining_map) or None if empty.
@@ -2646,81 +2381,79 @@ def _build_txn_list_text(txns: list, txn_type: str, title: str, session=None) ->
     lines = []
     remaining_map = {}
     for i, txn in enumerate(txns, 1):
-        total += txn.amount
-        settled = "✅" if txn.is_settled else "⏳"
+        total += txn["amount"]
+        settled = "✅" if txn["is_settled"] else "⏳"
 
         # Calculate remaining balance
-        remaining = txn.amount
-        if session and not txn.is_settled:
-            remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-        remaining_map[txn.id] = remaining
-        if not txn.is_settled:
+        remaining = txn["amount"]
+        if not txn["is_settled"]:
+            remaining = PaymentRepository.get_remaining(txn["id"], txn["amount"])
+        remaining_map[txn["id"]] = remaining
+        if not txn["is_settled"]:
             total_remaining += remaining
 
         text = f"{type_emoji} {type_label} {i}:\n"
-        text += f"🆔 شناسه: {txn.id}\n"
-        if txn.is_settled:
-            text += f"{settled} مبلغ: {format_amount(txn.amount)} تومان\n"
+        text += f"🆔 شناسه: {txn["id"]}\n"
+        if txn["is_settled"]:
+            text += f"{settled} مبلغ: {format_amount(txn["amount"])} تومان\n"
         else:
-            text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
+            text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
             text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
-        if txn.category:
-            cat_str = txn.category
-            if txn.subcategory:
-                cat_str += f" / {txn.subcategory}"
+        if txn["category"]:
+            cat_str = txn["category"]
+            if txn["subcategory"]:
+                cat_str += f" / {txn["subcategory"]}"
             text += f"🏷 دسته: {cat_str}\n"
-        if txn.party_name:
-            text += f"👤 طرف حساب: {txn.party_name}\n"
-        if txn.description:
-            text += f"📝 توضیحات: {txn.description}\n"
-        if txn.photo_path:
+        if txn["party_name"]:
+            text += f"👤 طرف حساب: {txn["party_name"]}\n"
+        if txn["description"]:
+            text += f"📝 توضیحات: {txn["description"]}\n"
+        if txn["photo_path"]:
             text += f"📸 عکس: ✅ دارد\n"
-        if txn.due_jalali_date:
-            days_left = get_days_until(txn.due_jalali_date)
-            time_str = f" ساعت {txn.due_jalali_time}" if txn.due_jalali_time else ""
-            if txn.is_settled:
-                text += f"📅 سررسید: {txn.due_jalali_date}{time_str}\n"
+        if txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            time_str = f" ساعت {txn["due_jalali_time"]}" if txn["due_jalali_time"] else ""
+            if txn["is_settled"]:
+                text += f"📅 سررسید: {txn["due_jalali_date"]}{time_str}\n"
             elif days_left < 0:
-                text += f"🔴 سررسید: {txn.due_jalali_date}{time_str} (منقضی)\n"
+                text += f"🔴 سررسید: {txn["due_jalali_date"]}{time_str} (منقضی)\n"
             elif days_left == 0:
-                text += f"🟡 سررسید: {txn.due_jalali_date}{time_str} (امروز)\n"
+                text += f"🟡 سررسید: {txn["due_jalali_date"]}{time_str} (امروز)\n"
             else:
-                text += f"🟢 سررسید: {txn.due_jalali_date}{time_str} ({days_left} روز مانده)\n"
-        if txn.card_number:
-            card_fmt = "-".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
+                text += f"🟢 سررسید: {txn["due_jalali_date"]}{time_str} ({days_left} روز مانده)\n"
+        if txn["card_number"]:
+            card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
             text += f"💳 کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
-        text += f"📅 ثبت: {txn.jalali_date} ساعت {txn.jalali_time}"
+        if txn["sheba"]:
+            text += f"🏦 شبا: {txn["sheba"]}\n"
+        if txn["bank_name"]:
+            text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
+        text += f"📅 ثبت: {txn["jalali_date"]} ساعت {txn["jalali_time"]}"
         lines.append(text)
 
     return lines, total, total_remaining, remaining_map
 
-
 async def _send_filtered_list(message: Message, txns: list, txn_type: str,
-                              title: str, empty_msg: str, keyboard_fn, session=None):
+                              title: str, empty_msg: str, keyboard_fn):
     """Send a filtered list of debt/receivable transactions."""
     if not txns:
         await message.answer(empty_msg, reply_markup=main_menu())
         return
 
-    result = _build_txn_list_text(txns, txn_type, title, session)
+    result = _build_txn_list_text(txns, txn_type, title)
     lines, total, total_remaining, remaining_map = result
 
     for i, text in enumerate(lines):
         txn = txns[i]
-        rem = remaining_map.get(txn.id)
-        has_pay_info = bool(txn.card_number or txn.sheba or txn.bank_name)
-        await message.answer(text, reply_markup=keyboard_fn(txn.id, has_photo=bool(txn.photo_path), remaining=rem, has_payment_info=has_pay_info))
+        rem = remaining_map.get(txn["id"])
+        has_pay_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
+        await message.answer(text, reply_markup=keyboard_fn(txn["id"], has_photo=bool(txn["photo_path"]), remaining=rem, has_payment_info=has_pay_info))
 
     type_label = "بدهی‌ها" if txn_type == "debt" else "طلب‌ها"
     summary = f"——————————\n📊 مجموع {type_label}: {format_amount(total)} تومان"
     if total_remaining > 0 and total_remaining != total:
         summary += f"\n💰 مجموع باقی‌مانده: {format_amount(total_remaining)} تومان"
     await message.answer(summary, reply_markup=main_menu())
-
 
 # --- Grouped receivable display ---
 
@@ -2737,7 +2470,6 @@ _debt_groups_lock = asyncio.Lock()
 _card_groups_cache: dict = {}
 _card_groups_lock = asyncio.Lock()
 
-
 def _evict_cache(cache: dict, max_size: int = _RECV_CACHE_MAX):
     """Evict oldest entries from cache if it exceeds max size."""
     if len(cache) > max_size:
@@ -2745,9 +2477,8 @@ def _evict_cache(cache: dict, max_size: int = _RECV_CACHE_MAX):
         for k in keys_to_remove:
             del cache[k]
 
-
 async def _send_grouped_receivable_list(message: Message, txns: list, title: str,
-                                        empty_msg: str, session=None, cache_key: str = None):
+                                        empty_msg: str, cache_key: str = None):
     """Send receivables grouped by customer.
 
     Main list shows ONLY customers as parent nodes.
@@ -2757,7 +2488,7 @@ async def _send_grouped_receivable_list(message: Message, txns: list, title: str
         await message.answer(empty_msg, reply_markup=main_menu())
         return
 
-    groups = _group_receivables_by_customer(txns, session)
+    groups = _group_receivables_by_customer(txns)
 
     if cache_key:
         async with _recv_groups_lock:
@@ -2794,9 +2525,8 @@ async def _send_grouped_receivable_list(message: Message, txns: list, title: str
         reply_markup=customer_receivable_keyboard(buttons_data)
     )
 
-
 async def _send_settled_customer_list(message: Message, txns: list, title: str,
-                                       empty_msg: str, session=None, cache_key: str = None):
+                                       empty_msg: str, cache_key: str = None):
     """Send settled receivables grouped by customer for the hierarchical view.
 
     Shows summary and customer buttons. Each customer button triggers
@@ -2807,7 +2537,7 @@ async def _send_settled_customer_list(message: Message, txns: list, title: str,
         await message.answer(empty_msg, reply_markup=main_menu())
         return
 
-    groups = _group_receivables_by_customer(txns, session)
+    groups = _group_receivables_by_customer(txns)
 
     if cache_key:
         async with _recv_groups_lock:
@@ -2847,8 +2577,7 @@ async def _send_settled_customer_list(message: Message, txns: list, title: str,
         reply_markup=settled_recv_customer_keyboard(buttons_data)
     )
 
-
-async def _send_grouped_customer_pay_list(message: Message, txns: list, session=None):
+async def _send_grouped_customer_pay_list(message: Message, txns: list):
     """Send customers grouped for receive payment selection.
 
     Shows each customer ONCE with total outstanding, not individual transactions.
@@ -2858,7 +2587,7 @@ async def _send_grouped_customer_pay_list(message: Message, txns: list, session=
         await message.answer(RECEIVE_RECV_NO_ACTIVE, reply_markup=main_menu())
         return
 
-    groups = _group_receivables_by_customer(txns, session)
+    groups = _group_receivables_by_customer(txns)
 
     cache_key = f"recv_pay_cust_{id(message)}"
     async with _recv_groups_lock:
@@ -2891,7 +2620,6 @@ async def _send_grouped_customer_pay_list(message: Message, txns: list, session=
             reply_markup=customer_receivable_keyboard(buttons_data)
         )
 
-
 @router.callback_query(F.data.startswith("recv_pay_cust:"))
 async def recv_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
     """Handle customer selection — skip individual txn selection, go directly to payment flow."""
@@ -2919,43 +2647,38 @@ async def recv_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
         return
 
-    active_txns = [t for t in group["txns"] if not t.is_settled]
+    active_txns = [t for t in group["txns"] if not t["is_settled"]]
     if not active_txns:
         await safe_callback_answer(callback, "⚠️ طلب فعالی برای این مشتری وجود ندارد.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        total_remaining = 0
-        for txn in active_txns:
-            rem = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            total_remaining += rem
+    total_remaining = 0
+    for txn in active_txns:
+        rem = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+        total_remaining += rem
 
-        await state.update_data(
-            payment_type="receivable",
-            customer_party=group["party"],
-            customer_cache_key=cache_key,
-            customer_safe_party=safe_party,
-            customer_total_remaining=total_remaining,
-            customer_txn_ids=[t.id for t in active_txns]
-        )
+    await state.update_data(
+        payment_type="receivable",
+        customer_party=group["party"],
+        customer_cache_key=cache_key,
+        customer_safe_party=safe_party,
+        customer_total_remaining=total_remaining,
+        customer_txn_ids=[t["id"] for t in active_txns]
+    )
 
-        text = f"💵 دریافت طلب\n\n"
-        text += f"👤 مشتری: {group['party']}\n"
-        text += f"💰 کل طلب: {format_amount(total_remaining)} تومان\n\n"
-        text += f"━━━━━━━━━━━━━━━━━━\n\n"
-        text += f"نوع دریافت را انتخاب کنید:\n"
-        text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
-        text += f"└── ✂️ جزئی (ورود مبلغ)"
+    text = f"💵 دریافت طلب\n\n"
+    text += f"👤 مشتری: {group['party']}\n"
+    text += f"💰 کل طلب: {format_amount(total_remaining)} تومان\n\n"
+    text += f"━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"نوع دریافت را انتخاب کنید:\n"
+    text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
+    text += f"└── ✂️ جزئی (ورود مبلغ)"
 
-        await callback.message.answer(text, reply_markup=payment_type_keyboard())
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.answer(text, reply_markup=payment_type_keyboard())
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
 
-
-async def _send_grouped_customer_debt_list(message: Message, txns: list, session=None):
+async def _send_grouped_customer_debt_list(message: Message, txns: list):
     """Send customers grouped for pay debt selection.
 
     Shows each customer ONCE with total outstanding, not individual transactions.
@@ -2965,7 +2688,7 @@ async def _send_grouped_customer_debt_list(message: Message, txns: list, session
         await message.answer(PAY_DEBT_NO_ACTIVE, reply_markup=main_menu())
         return
 
-    groups = _group_receivables_by_customer(txns, session)
+    groups = _group_receivables_by_customer(txns)
 
     cache_key = f"debt_pay_cust_{id(message)}"
     async with _recv_groups_lock:
@@ -2998,7 +2721,6 @@ async def _send_grouped_customer_debt_list(message: Message, txns: list, session
             reply_markup=customer_receivable_keyboard(buttons_data)
         )
 
-
 @router.callback_query(F.data.startswith("debt_pay_cust:"))
 async def debt_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
     """Handle customer selection for pay debt — go directly to payment flow."""
@@ -3026,46 +2748,41 @@ async def debt_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
         return
 
-    active_txns = [t for t in group["txns"] if not t.is_settled]
+    active_txns = [t for t in group["txns"] if not t["is_settled"]]
     if not active_txns:
         await safe_callback_answer(callback, "⚠️ بدهی فعالی برای این مشتری وجود ندارد.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        total_remaining = 0
-        for txn in active_txns:
-            rem = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            total_remaining += rem
+    total_remaining = 0
+    for txn in active_txns:
+        rem = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+        total_remaining += rem
 
-        await state.update_data(
-            payment_type="debt",
-            customer_party=group["party"],
-            customer_cache_key=cache_key,
-            customer_safe_party=safe_party,
-            customer_total_remaining=total_remaining,
-            customer_txn_ids=[t.id for t in active_txns]
-        )
+    await state.update_data(
+        payment_type="debt",
+        customer_party=group["party"],
+        customer_cache_key=cache_key,
+        customer_safe_party=safe_party,
+        customer_total_remaining=total_remaining,
+        customer_txn_ids=[t["id"] for t in active_txns]
+    )
 
-        text = f"💳 پرداخت بدهی\n\n"
-        text += f"👤 مشتری: {group['party']}\n"
-        text += f"💰 کل بدهی: {format_amount(total_remaining)} تومان\n\n"
-        text += f"━━━━━━━━━━━━━━━━━━\n\n"
-        text += f"نوع پرداخت را انتخاب کنید:\n"
-        text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
-        text += f"└── ✂️ جزئی (ورود مبلغ)"
+    text = f"💳 پرداخت بدهی\n\n"
+    text += f"👤 مشتری: {group['party']}\n"
+    text += f"💰 کل بدهی: {format_amount(total_remaining)} تومان\n\n"
+    text += f"━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"نوع پرداخت را انتخاب کنید:\n"
+    text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
+    text += f"└── ✂️ جزئی (ورود مبلغ)"
 
-        await callback.message.answer(text, reply_markup=payment_type_keyboard())
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.answer(text, reply_markup=payment_type_keyboard())
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
-
 
 # --- Grouped debt display for "All Debts" ---
 
 async def _send_grouped_debt_list(message: Message, txns: list, title: str,
-                                   empty_msg: str, session=None, cache_key: str = None):
+                                   empty_msg: str, cache_key: str = None):
     """Send debts grouped by customer for hierarchical navigation.
 
     Main list shows ONLY customers as parent nodes.
@@ -3076,7 +2793,7 @@ async def _send_grouped_debt_list(message: Message, txns: list, title: str,
         await message.answer(empty_msg, reply_markup=main_menu())
         return
 
-    groups = _group_receivables_by_customer(txns, session)
+    groups = _group_receivables_by_customer(txns)
 
     if cache_key:
         async with _debt_groups_lock:
@@ -3113,14 +2830,12 @@ async def _send_grouped_debt_list(message: Message, txns: list, title: str,
         reply_markup=debt_customer_keyboard(buttons_data)
     )
 
-
 # --- Debt submenu ---
 
 @router.message(F.text == "💳 بدهی‌ها")
 async def debt_menu(message: Message):
     """Show debt submenu."""
     await message.answer(DEBT_MENU_TITLE, reply_markup=debt_submenu())
-
 
 @router.callback_query(F.data == "debt_active")
 async def debt_active_list(callback: CallbackQuery):
@@ -3129,20 +2844,19 @@ async def debt_active_list(callback: CallbackQuery):
         await safe_delete(callback.message)
     except Exception:
         pass
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
             return
-        txns = TransactionRepository.get_active(session, user.id, "debt")
+        txns = TransactionRepository.get_active( user["id"], "debt")
         if not txns:
             await callback.message.answer(DEBT_ACTIVE_EMPTY, reply_markup=main_menu())
             await safe_callback_answer(callback)
             return
 
-        groups = _group_receivables_by_customer(txns, session)
-        cache_key = f"debt_active_{user.id}"
+        groups = _group_receivables_by_customer(txns)
+        cache_key = f"debt_active_{user["id"]}"
         async with _debt_groups_lock:
             _debt_groups_cache[cache_key] = {g["party"]: g for g in groups}
             _evict_cache(_debt_groups_cache)
@@ -3187,77 +2901,59 @@ async def debt_active_list(callback: CallbackQuery):
             await callback.message.answer("⚠️ خطایی رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
         except Exception:
             pass
-    finally:
-        session.close()
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "debt_overdue")
 async def debt_overdue_list(callback: CallbackQuery):
     """Show overdue debts grouped by customer."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        today = get_jalali_date()
-        txns = TransactionRepository.get_overdue(session, user.id, "debt", today)
-        cache_key = f"debt_overdue_{user.id}"
-        await _send_grouped_debt_list(
-            callback.message, txns, DEBT_OVERDUE,
-            DEBT_OVERDUE_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    today = get_jalali_date()
+    txns = TransactionRepository.get_overdue( user["id"], "debt", today)
+    cache_key = f"debt_overdue_{user["id"]}"
+    await _send_grouped_debt_list(
+        callback.message, txns, DEBT_OVERDUE,
+        DEBT_OVERDUE_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "debt_due_today")
 async def debt_due_today_list(callback: CallbackQuery):
     """Show debts due today grouped by customer."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        today = get_jalali_date()
-        txns = TransactionRepository.get_due_today(session, user.id, "debt", today)
-        cache_key = f"debt_today_{user.id}"
-        await _send_grouped_debt_list(
-            callback.message, txns, DEBT_DUE_TODAY,
-            DEBT_DUE_TODAY_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    today = get_jalali_date()
+    txns = TransactionRepository.get_due_today( user["id"], "debt", today)
+    cache_key = f"debt_today_{user["id"]}"
+    await _send_grouped_debt_list(
+        callback.message, txns, DEBT_DUE_TODAY,
+        DEBT_DUE_TODAY_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "debt_due_week")
 async def debt_due_week_list(callback: CallbackQuery):
     """Show debts due this week grouped by customer."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        today = get_jalali_date()
-        week_end = get_week_end_jalali()
-        txns = TransactionRepository.get_due_this_week(session, user.id, "debt", today, week_end)
-        cache_key = f"debt_week_{user.id}"
-        await _send_grouped_debt_list(
-            callback.message, txns, DEBT_DUE_WEEK,
-            DEBT_DUE_WEEK_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    today = get_jalali_date()
+    week_end = get_week_end_jalali()
+    txns = TransactionRepository.get_due_this_week( user["id"], "debt", today, week_end)
+    cache_key = f"debt_week_{user["id"]}"
+    await _send_grouped_debt_list(
+        callback.message, txns, DEBT_DUE_WEEK,
+        DEBT_DUE_WEEK_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 # --- Debt category-filtered lists ---
 
@@ -3267,13 +2963,12 @@ def _filter_by_category(txns: list, category: str = None, subcategory: str = Non
         return txns
     filtered = []
     for txn in txns:
-        if category and txn.category != category:
+        if category and txn["category"] != category:
             continue
-        if subcategory and txn.subcategory != subcategory:
+        if subcategory and txn["subcategory"] != subcategory:
             continue
         filtered.append(txn)
     return filtered
-
 
 @router.callback_query(F.data == "debt_all_cat")
 async def debt_all_cat_menu(callback: CallbackQuery):
@@ -3283,7 +2978,6 @@ async def debt_all_cat_menu(callback: CallbackQuery):
         reply_markup=debt_category_filter_keyboard("debt_all")
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_all_cat:"))
 async def debt_all_cat_selected(callback: CallbackQuery):
@@ -3296,42 +2990,34 @@ async def debt_all_cat_selected(callback: CallbackQuery):
         return
 
     if category == "all":
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
-            await safe_delete(callback.message)
-            cache_key = f"debt_all_{user.id}"
-            await _send_grouped_debt_list(
-                callback.message, txns, DEBT_ALL,
-                DEBT_EMPTY, session, cache_key
-            )
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+        await safe_delete(callback.message)
+        cache_key = f"debt_all_{user["id"]}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_ALL,
+            DEBT_EMPTY, cache_key
+        )
         await safe_callback_answer(callback)
         return
 
     subs = DEBT_CATEGORIES.get(category, [])
     if not subs:
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
-            filtered = _filter_by_category(txns, category=category)
-            await safe_delete(callback.message)
-            cache_key = f"debt_all_{user.id}_{category}"
-            await _send_grouped_debt_list(
-                callback.message, filtered, f"{DEBT_ALL} ({category})",
-                DEBT_EMPTY, session, cache_key
-            )
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+        filtered = _filter_by_category(txns, category=category)
+        await safe_delete(callback.message)
+        cache_key = f"debt_all_{user["id"]}_{category}"
+        await _send_grouped_debt_list(
+            callback.message, filtered, f"{DEBT_ALL} ({category})",
+            DEBT_EMPTY, cache_key
+        )
         await safe_callback_answer(callback)
         return
 
@@ -3340,7 +3026,6 @@ async def debt_all_cat_selected(callback: CallbackQuery):
         reply_markup=debt_subcategory_filter_keyboard("debt_all", category)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_all_sub:"))
 async def debt_all_sub_selected(callback: CallbackQuery):
@@ -3355,33 +3040,28 @@ async def debt_all_sub_selected(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
 
-        if subcategory != "all":
-            parent_cat = None
-            for cat, subs in DEBT_CATEGORIES.items():
-                if subcategory in subs:
-                    parent_cat = cat
-                    break
-            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+    if subcategory != "all":
+        parent_cat = None
+        for cat, subs in DEBT_CATEGORIES.items():
+            if subcategory in subs:
+                parent_cat = cat
+                break
+        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await safe_delete(callback.message)
-        title = f"{DEBT_ALL} ({subcategory})" if subcategory != "all" else DEBT_ALL
-        cache_key = f"debt_all_{user.id}_{subcategory}"
-        await _send_grouped_debt_list(
-            callback.message, txns, title,
-            DEBT_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    await safe_delete(callback.message)
+    title = f"{DEBT_ALL} ({subcategory})" if subcategory != "all" else DEBT_ALL
+    cache_key = f"debt_all_{user["id"]}_{subcategory}"
+    await _send_grouped_debt_list(
+        callback.message, txns, title,
+        DEBT_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "debt_settled_cat")
 async def debt_settled_cat_menu(callback: CallbackQuery):
@@ -3391,7 +3071,6 @@ async def debt_settled_cat_menu(callback: CallbackQuery):
         reply_markup=debt_category_filter_keyboard("debt_settled")
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_settled_cat:"))
 async def debt_settled_cat_selected(callback: CallbackQuery):
@@ -3404,36 +3083,28 @@ async def debt_settled_cat_selected(callback: CallbackQuery):
         return
 
     if category == "all":
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_settled(session, user.id, "debt")
-            await safe_delete(callback.message)
-            cache_key = f"debt_settled_{user.id}"
-            await _send_grouped_debt_list(callback.message, txns, DEBT_SETTLED, DEBT_SETTLED_EMPTY, session, cache_key)
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_settled( user["id"], "debt")
+        await safe_delete(callback.message)
+        cache_key = f"debt_settled_{user["id"]}"
+        await _send_grouped_debt_list(callback.message, txns, DEBT_SETTLED, DEBT_SETTLED_EMPTY, cache_key)
         await safe_callback_answer(callback)
         return
 
     subs = DEBT_CATEGORIES.get(category, [])
     if not subs:
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_settled(session, user.id, "debt")
-            filtered = _filter_by_category(txns, category=category)
-            await safe_delete(callback.message)
-            cache_key = f"debt_settled_{user.id}_{category}"
-            await _send_grouped_debt_list(callback.message, filtered, f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, session, cache_key)
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_settled( user["id"], "debt")
+        filtered = _filter_by_category(txns, category=category)
+        await safe_delete(callback.message)
+        cache_key = f"debt_settled_{user["id"]}_{category}"
+        await _send_grouped_debt_list(callback.message, filtered, f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, cache_key)
         await safe_callback_answer(callback)
         return
 
@@ -3442,7 +3113,6 @@ async def debt_settled_cat_selected(callback: CallbackQuery):
         reply_markup=debt_subcategory_filter_keyboard("debt_settled", category)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_settled_sub:"))
 async def debt_settled_sub_selected(callback: CallbackQuery):
@@ -3457,30 +3127,25 @@ async def debt_settled_sub_selected(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_settled(session, user.id, "debt")
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txns = TransactionRepository.get_settled( user["id"], "debt")
 
-        if subcategory != "all":
-            parent_cat = None
-            for cat, subs in DEBT_CATEGORIES.items():
-                if subcategory in subs:
-                    parent_cat = cat
-                    break
-            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+    if subcategory != "all":
+        parent_cat = None
+        for cat, subs in DEBT_CATEGORIES.items():
+            if subcategory in subs:
+                parent_cat = cat
+                break
+        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await safe_delete(callback.message)
-        title = f"{DEBT_SETTLED} ({subcategory})" if subcategory != "all" else DEBT_SETTLED
-        cache_key = f"debt_settled_{user.id}_{subcategory}"
-        await _send_grouped_debt_list(callback.message, txns, title, DEBT_SETTLED_EMPTY, session, cache_key)
-    finally:
-        session.close()
+    await safe_delete(callback.message)
+    title = f"{DEBT_SETTLED} ({subcategory})" if subcategory != "all" else DEBT_SETTLED
+    cache_key = f"debt_settled_{user["id"]}_{subcategory}"
+    await _send_grouped_debt_list(callback.message, txns, title, DEBT_SETTLED_EMPTY, cache_key)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "debt_pay_cat")
 async def debt_pay_cat_menu(callback: CallbackQuery):
@@ -3490,7 +3155,6 @@ async def debt_pay_cat_menu(callback: CallbackQuery):
         reply_markup=debt_category_filter_keyboard("debt_pay")
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_pay_cat:"))
 async def debt_pay_cat_selected(callback: CallbackQuery, state: FSMContext):
@@ -3503,49 +3167,41 @@ async def debt_pay_cat_selected(callback: CallbackQuery, state: FSMContext):
         return
 
     if category == "all":
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_active(session, user.id, "debt")
-            if not txns:
-                await callback.message.edit_text(PAY_DEBT_NO_ACTIVE, reply_markup=debt_submenu())
-                await safe_callback_answer(callback)
-                return
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_active( user["id"], "debt")
+        if not txns:
+            await callback.message.edit_text(PAY_DEBT_NO_ACTIVE, reply_markup=debt_submenu())
+            await safe_callback_answer(callback)
+            return
 
-            await _send_grouped_customer_debt_list(
-                callback.message, txns, session
-            )
-        finally:
-            session.close()
+        await _send_grouped_customer_debt_list(
+            callback.message, txns
+        )
         await safe_callback_answer(callback)
         return
 
     subs = DEBT_CATEGORIES.get(category, [])
     if not subs:
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_active(session, user.id, "debt")
-            filtered = _filter_by_category(txns, category=category)
-            if not filtered:
-                await callback.message.edit_text(
-                    f"{PAY_DEBT_NO_ACTIVE}\n\nدسته: {category}",
-                    reply_markup=debt_submenu()
-                )
-                await safe_callback_answer(callback)
-                return
-
-            await _send_grouped_customer_debt_list(
-                callback.message, filtered, session
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_active( user["id"], "debt")
+        filtered = _filter_by_category(txns, category=category)
+        if not filtered:
+            await callback.message.edit_text(
+                f"{PAY_DEBT_NO_ACTIVE}\n\nدسته: {category}",
+                reply_markup=debt_submenu()
             )
-        finally:
-            session.close()
+            await safe_callback_answer(callback)
+            return
+
+        await _send_grouped_customer_debt_list(
+            callback.message, filtered
+        )
         await safe_callback_answer(callback)
         return
 
@@ -3554,7 +3210,6 @@ async def debt_pay_cat_selected(callback: CallbackQuery, state: FSMContext):
         reply_markup=debt_subcategory_filter_keyboard("debt_pay", category)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_pay_sub:"))
 async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
@@ -3569,91 +3224,80 @@ async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback)
         return
 
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_active(session, user.id, "debt")
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txns = TransactionRepository.get_active( user["id"], "debt")
 
-        if subcategory != "all":
-            parent_cat = None
-            for cat, subs in DEBT_CATEGORIES.items():
-                if subcategory in subs:
-                    parent_cat = cat
-                    break
-            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+    if subcategory != "all":
+        parent_cat = None
+        for cat, subs in DEBT_CATEGORIES.items():
+            if subcategory in subs:
+                parent_cat = cat
+                break
+        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        if not txns:
-            label = subcategory if subcategory != "all" else ""
-            await callback.message.edit_text(
-                f"{PAY_DEBT_NO_ACTIVE}\n\n{label}",
-                reply_markup=debt_submenu()
-            )
-            await safe_callback_answer(callback)
-            return
-
-        await _send_grouped_customer_debt_list(
-            callback.message, txns, session
+    if not txns:
+        label = subcategory if subcategory != "all" else ""
+        await callback.message.edit_text(
+            f"{PAY_DEBT_NO_ACTIVE}\n\n{label}",
+            reply_markup=debt_submenu()
         )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
+        await safe_callback_answer(callback)
+        return
 
+    await _send_grouped_customer_debt_list(
+        callback.message, txns
+    )
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "debt_reports")
 async def debt_reports(callback: CallbackQuery):
     """Show debt summary report."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
 
-        all_debts = TransactionRepository.get_by_user(session, user.id, transaction_type="debt", limit=1000)
-        today = get_jalali_date()
+    all_debts = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+    today = get_jalali_date()
 
-        total = len(all_debts)
-        total_amount = sum(t.amount for t in all_debts)
+    total = len(all_debts)
+    total_amount = sum(t["amount"] for t in all_debts)
 
-        active = [t for t in all_debts if not t.is_settled]
-        active_count = len(active)
-        active_amount = sum(t.amount for t in active)
+    active = [t for t in all_debts if not t["is_settled"]]
+    active_count = len(active)
+    active_amount = sum(t["amount"] for t in active)
 
-        settled = [t for t in all_debts if t.is_settled]
-        settled_count = len(settled)
-        settled_amount = sum(t.amount for t in settled)
+    settled = [t for t in all_debts if t["is_settled"]]
+    settled_count = len(settled)
+    settled_amount = sum(t["amount"] for t in settled)
 
-        overdue = [t for t in active if t.due_jalali_date and t.due_jalali_date < today]
-        overdue_count = len(overdue)
-        overdue_amount = sum(t.amount for t in overdue)
+    overdue = [t for t in active if t["due_jalali_date"] and t["due_jalali_date"] < today]
+    overdue_count = len(overdue)
+    overdue_amount = sum(t["amount"] for t in overdue)
 
-        due_today = [t for t in active if t.due_jalali_date == today]
-        due_today_count = len(due_today)
+    due_today = [t for t in active if t["due_jalali_date"] == today]
+    due_today_count = len(due_today)
 
-        report = DEBT_REPORT_TITLE.format(
-            total=total,
-            total_amount=format_amount(total_amount),
-            active=active_count,
-            active_amount=format_amount(active_amount),
-            settled=settled_count,
-            settled_amount=format_amount(settled_amount),
-            overdue=overdue_count,
-            overdue_amount=format_amount(overdue_amount),
-            due_today=due_today_count
-        )
+    report = DEBT_REPORT_TITLE.format(
+        total=total,
+        total_amount=format_amount(total_amount),
+        active=active_count,
+        active_amount=format_amount(active_amount),
+        settled=settled_count,
+        settled_amount=format_amount(settled_amount),
+        overdue=overdue_count,
+        overdue_amount=format_amount(overdue_amount),
+        due_today=due_today_count
+    )
 
-        await callback.message.answer(report, reply_markup=debt_submenu())
-    finally:
-        session.close()
+    await callback.message.answer(report, reply_markup=debt_submenu())
     await safe_callback_answer(callback)
 
-
 # --- Debt hierarchical navigation (Level 2 & 3) ---
-
 
 @router.callback_query(F.data.startswith("debt_cust_detail:"))
 async def debt_customer_detail(callback: CallbackQuery):
@@ -3684,7 +3328,7 @@ async def debt_customer_detail(callback: CallbackQuery):
 
     party = group["party"]
     txns = group["txns"]
-    active_txns = [t for t in txns if not t.is_settled]
+    active_txns = [t for t in txns if not t["is_settled"]]
 
     text = f"💳 {party}\n\n"
     text += f"📊 خلاصه مشتری\n"
@@ -3697,34 +3341,29 @@ async def debt_customer_detail(callback: CallbackQuery):
     await callback.message.edit_text(text)
 
     txns_data = []
-    session = get_session()
-    try:
-        for txn in active_txns:
-            due_emoji = ""
-            if txn.due_jalali_date:
-                days_left = get_days_until(txn.due_jalali_date)
-                if days_left < 0:
-                    due_emoji = "🔴"
-                elif days_left == 0:
-                    due_emoji = "🟡"
-                else:
-                    due_emoji = "🟢"
-            label = f"📋 #{txn.id} | {format_amount(txn.amount)} تومان"
-            if due_emoji:
-                label = f"{due_emoji} #{txn.id} | {format_amount(txn.amount)} تومان"
-            txns_data.append({
-                "label": label,
-                "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn.id}"
-            })
-    finally:
-        session.close()
+    for txn in active_txns:
+        due_emoji = ""
+        if txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            if days_left < 0:
+                due_emoji = "🔴"
+            elif days_left == 0:
+                due_emoji = "🟡"
+            else:
+                due_emoji = "🟢"
+        label = f"📋 #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        if due_emoji:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        txns_data.append({
+            "label": label,
+            "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+        })
 
     await callback.message.answer(
         DEBT_SELECT_DEBT,
         reply_markup=debt_customer_debts_keyboard(txns_data)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_all_cust:"))
 async def debt_all_customer_detail(callback: CallbackQuery):
@@ -3767,41 +3406,37 @@ async def debt_all_customer_detail(callback: CallbackQuery):
     await callback.message.edit_text(text)
 
     txns_data = []
-    session = get_session()
-    try:
-        for txn in txns:
-            # Determine status emoji
-            if txn.is_settled:
-                due_emoji = "✅"
-            elif txn.due_jalali_date:
-                days_left = get_days_until(txn.due_jalali_date)
-                if days_left < 0:
-                    due_emoji = "🔴"
-                elif days_left == 0:
-                    due_emoji = "🟡"
-                else:
-                    due_emoji = "🟢"
+    for txn in txns:
+        # Determine status emoji
+        if txn["is_settled"]:
+            due_emoji = "✅"
+        elif txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            if days_left < 0:
+                due_emoji = "🔴"
+            elif days_left == 0:
+                due_emoji = "🟡"
             else:
-                due_emoji = "⏳"
+                due_emoji = "🟢"
+        else:
+            due_emoji = "⏳"
 
-            # Calculate remaining for display
-            remaining = txn.amount
-            if not txn.is_settled:
-                remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
+        # Calculate remaining for display
+        remaining = txn["amount"]
+        if not txn["is_settled"]:
+            remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
 
-            if txn.is_settled:
-                label = f"✅ #{txn.id} | {format_amount(txn.amount)} تومان (تسویه)"
-            elif remaining != txn.amount:
-                label = f"{due_emoji} #{txn.id} | {format_amount(remaining)}/{format_amount(txn.amount)} تومان"
-            else:
-                label = f"{due_emoji} #{txn.id} | {format_amount(txn.amount)} تومان"
+        if txn["is_settled"]:
+            label = f"✅ #{txn["id"]} | {format_amount(txn["amount"])} تومان (تسویه)"
+        elif remaining != txn["amount"]:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(remaining)}/{format_amount(txn["amount"])} تومان"
+        else:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
 
-            txns_data.append({
-                "label": label,
-                "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn.id}"
-            })
-    finally:
-        session.close()
+        txns_data.append({
+            "label": label,
+            "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+        })
 
     # Determine back callback based on cache key prefix
     back_callback = "debt_group_back"
@@ -3813,7 +3448,6 @@ async def debt_all_customer_detail(callback: CallbackQuery):
         reply_markup=debt_customer_debts_keyboard(txns_data, back_callback)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_all_back:"))
 async def debt_all_back_handler(callback: CallbackQuery):
@@ -3870,7 +3504,6 @@ async def debt_all_back_handler(callback: CallbackQuery):
     )
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("debt_item_detail:"))
 async def debt_item_detail(callback: CallbackQuery):
     """Level 3: Show full details for a specific debt."""
@@ -3887,58 +3520,53 @@ async def debt_item_detail(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn:
-            await safe_callback_answer(callback, "⚠️ بدهی یافت نشد.", show_alert=True)
-            return
+    txn = TransactionRepository.get_by_id( txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ بدهی یافت نشد.", show_alert=True)
+        return
 
-        remaining = txn.amount
-        if not txn.is_settled:
-            remaining = PaymentRepository.get_remaining(session, txn_id, txn.amount)
+    remaining = txn["amount"]
+    if not txn["is_settled"]:
+        remaining = PaymentRepository.get_remaining( txn_id, txn["amount"])
 
-        text = f"📋 جزئیات بدهی\n\n"
-        text += f"🆔 شناسه: {txn.id}\n"
-        text += f"👤 طرف حساب: {txn.party_name or '-'}\n"
-        cat_str = txn.category or "-"
-        if txn.subcategory:
-            cat_str += f" / {txn.subcategory}"
-        text += f"🏷 دسته: {cat_str}\n"
-        text += f"🏢 نوع: {txn.category or '-'}\n"
-        text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
-        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
-        if txn.description:
-            text += f"📝 توضیحات: {txn.description}\n"
-        if txn.due_jalali_date:
-            days_left = get_days_until(txn.due_jalali_date)
-            time_str = f" ساعت {txn.due_jalali_time}" if txn.due_jalali_time else ""
-            if txn.is_settled:
-                text += f"📅 سررسید: {txn.due_jalali_date}{time_str}\n"
-            elif days_left < 0:
-                text += f"🔴 سررسید: {txn.due_jalali_date}{time_str} (منقضی)\n"
-            elif days_left == 0:
-                text += f"🟡 سررسید: {txn.due_jalali_date}{time_str} (امروز)\n"
-            else:
-                text += f"🟢 سررسید: {txn.due_jalali_date}{time_str} ({days_left} روز)\n"
-        if txn.card_number:
-            card_fmt = "-".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-            text += f"💳 کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
-        text += f"📅 ثبت: {txn.jalali_date} ساعت {txn.jalali_time}"
+    text = f"📋 جزئیات بدهی\n\n"
+    text += f"🆔 شناسه: {txn["id"]}\n"
+    text += f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
+    cat_str = txn["category"] or "-"
+    if txn["subcategory"]:
+        cat_str += f" / {txn["subcategory"]}"
+    text += f"🏷 دسته: {cat_str}\n"
+    text += f"🏢 نوع: {txn["category"] or '-'}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
+    text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    if txn["description"]:
+        text += f"📝 توضیحات: {txn["description"]}\n"
+    if txn["due_jalali_date"]:
+        days_left = get_days_until(txn["due_jalali_date"])
+        time_str = f" ساعت {txn["due_jalali_time"]}" if txn["due_jalali_time"] else ""
+        if txn["is_settled"]:
+            text += f"📅 سررسید: {txn["due_jalali_date"]}{time_str}\n"
+        elif days_left < 0:
+            text += f"🔴 سررسید: {txn["due_jalali_date"]}{time_str} (منقضی)\n"
+        elif days_left == 0:
+            text += f"🟡 سررسید: {txn["due_jalali_date"]}{time_str} (امروز)\n"
+        else:
+            text += f"🟢 سررسید: {txn["due_jalali_date"]}{time_str} ({days_left} روز)\n"
+    if txn["card_number"]:
+        card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn["sheba"]}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
+    text += f"📅 ثبت: {txn["jalali_date"]} ساعت {txn["jalali_time"]}"
 
-        has_photo = bool(txn.photo_path)
-        has_pay_info = bool(txn.card_number or txn.sheba or txn.bank_name)
+    has_photo = bool(txn["photo_path"])
+    has_pay_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
 
-        kb = debt_detail_keyboard(txn.id, cache_key, safe_party, has_photo, remaining, has_pay_info)
-        await callback.message.edit_text(text, reply_markup=kb)
-    finally:
-        session.close()
+    kb = debt_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, remaining, has_pay_info)
+    await callback.message.edit_text(text, reply_markup=kb)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_detail_back:"))
 async def debt_detail_back_handler(callback: CallbackQuery):
@@ -3986,7 +3614,7 @@ async def debt_detail_back_handler(callback: CallbackQuery):
         text += "\n────────────────────"
     else:
         # Show only active debts
-        active_txns = [t for t in txns if not t.is_settled]
+        active_txns = [t for t in txns if not t["is_settled"]]
         text = f"💳 {party}\n\n"
         text += f"📊 خلاصه مشتری\n"
         text += f"• تعداد بدهی‌ها: {group['count']}\n"
@@ -3996,45 +3624,41 @@ async def debt_detail_back_handler(callback: CallbackQuery):
         text += "\n────────────────────"
 
     txns_data = []
-    session = get_session()
-    try:
-        display_txns = txns if is_all_debts else [t for t in txns if not t.is_settled]
-        for txn in display_txns:
-            # Determine status emoji
-            if txn.is_settled:
-                due_emoji = "✅"
-            elif txn.due_jalali_date:
-                days_left = get_days_until(txn.due_jalali_date)
-                if days_left < 0:
-                    due_emoji = "🔴"
-                elif days_left == 0:
-                    due_emoji = "🟡"
-                else:
-                    due_emoji = "🟢"
+    display_txns = txns if is_all_debts else [t for t in txns if not t["is_settled"]]
+    for txn in display_txns:
+        # Determine status emoji
+        if txn["is_settled"]:
+            due_emoji = "✅"
+        elif txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            if days_left < 0:
+                due_emoji = "🔴"
+            elif days_left == 0:
+                due_emoji = "🟡"
             else:
-                due_emoji = "⏳"
+                due_emoji = "🟢"
+        else:
+            due_emoji = "⏳"
 
-            if is_all_debts:
-                # Calculate remaining for display
-                remaining = txn.amount
-                if not txn.is_settled:
-                    remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
+        if is_all_debts:
+            # Calculate remaining for display
+            remaining = txn["amount"]
+            if not txn["is_settled"]:
+                remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
 
-                if txn.is_settled:
-                    label = f"✅ #{txn.id} | {format_amount(txn.amount)} تومان (تسویه)"
-                elif remaining != txn.amount:
-                    label = f"{due_emoji} #{txn.id} | {format_amount(remaining)}/{format_amount(txn.amount)} تومان"
-                else:
-                    label = f"{due_emoji} #{txn.id} | {format_amount(txn.amount)} تومان"
+            if txn["is_settled"]:
+                label = f"✅ #{txn["id"]} | {format_amount(txn["amount"])} تومان (تسویه)"
+            elif remaining != txn["amount"]:
+                label = f"{due_emoji} #{txn["id"]} | {format_amount(remaining)}/{format_amount(txn["amount"])} تومان"
             else:
-                label = f"{due_emoji} #{txn.id} | {format_amount(txn.amount)} تومان"
+                label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        else:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
 
-            txns_data.append({
-                "label": label,
-                "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn.id}"
-            })
-    finally:
-        session.close()
+        txns_data.append({
+            "label": label,
+            "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+        })
 
     # Determine back callback
     back_callback = "debt_group_back"
@@ -4048,13 +3672,11 @@ async def debt_detail_back_handler(callback: CallbackQuery):
     )
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data == "debt_group_back")
 async def debt_group_back(callback: CallbackQuery):
     """Navigate back to Level 1 (customer overview) or debt submenu."""
     await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("debt_payment_history:"))
 async def debt_payment_history(callback: CallbackQuery):
@@ -4065,29 +3687,24 @@ async def debt_payment_history(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        payments = PaymentRepository.get_by_transaction(session, txn_id)
-        if not payments:
-            await safe_callback_answer(callback, DEBT_PAYMENT_HISTORY_EMPTY, show_alert=True)
-            return
+    payments = PaymentRepository.get_by_transaction( txn_id)
+    if not payments:
+        await safe_callback_answer(callback, DEBT_PAYMENT_HISTORY_EMPTY, show_alert=True)
+        return
 
-        text = f"{DEBT_PAYMENT_HISTORY_TITLE} - بدهی #{txn_id}\n\n"
-        total_paid = 0
-        for p in payments:
-            total_paid += p.amount
-            text += f"💰 {format_amount(p.amount)} تومان\n"
-            text += f"📅 {p.jalali_date} ساعت {p.jalali_time}\n"
-            if p.description:
-                text += f"📝 {p.description}\n"
-            text += "──────────\n"
-        text += f"\n💰 مجموع پرداختی: {format_amount(total_paid)} تومان"
+    text = f"{DEBT_PAYMENT_HISTORY_TITLE} - بدهی #{txn_id}\n\n"
+    total_paid = 0
+    for p in payments:
+        total_paid += p["amount"]
+        text += f"💰 {format_amount(p['amount'])} تومان\n"
+        text += f"📅 {p['jalali_date']} ساعت {p['jalali_time']}\n"
+        if p["description"]:
+            text += f"📝 {p['description']}\n"
+        text += "──────────\n"
+    text += f"\n💰 مجموع پرداختی: {format_amount(total_paid)} تومان"
 
-        await callback.message.answer(text)
-    finally:
-        session.close()
+    await callback.message.answer(text)
     await safe_callback_answer(callback)
-
 
 # --- Receivable submenu ---
 
@@ -4096,7 +3713,6 @@ async def receivable_menu(message: Message):
     """Show receivable submenu."""
     await message.answer(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
 
-
 @router.callback_query(F.data == "receivable_active")
 async def receivable_active_list(callback: CallbackQuery):
     """Level 1: Show active receivables grouped by customer overview."""
@@ -4104,20 +3720,19 @@ async def receivable_active_list(callback: CallbackQuery):
         await safe_delete(callback.message)
     except Exception:
         pass
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
             return
-        txns = TransactionRepository.get_active(session, user.id, "receivable")
+        txns = TransactionRepository.get_active( user["id"], "receivable")
         if not txns:
             await callback.message.answer(RECEIVABLE_ACTIVE_EMPTY, reply_markup=main_menu())
             await safe_callback_answer(callback)
             return
 
-        groups = _group_receivables_by_customer(txns, session)
-        cache_key = f"recv_active_{user.id}"
+        groups = _group_receivables_by_customer(txns)
+        cache_key = f"recv_active_{user["id"]}"
         async with _recv_groups_lock:
             _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
             _evict_cache(_recv_groups_cache)
@@ -4162,77 +3777,59 @@ async def receivable_active_list(callback: CallbackQuery):
             await callback.message.answer("⚠️ خطایی رخ داد. لطفاً دوباره تلاش کنید.", reply_markup=main_menu())
         except Exception:
             pass
-    finally:
-        session.close()
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "receivable_overdue")
 async def receivable_overdue_list(callback: CallbackQuery):
     """Show overdue receivables grouped by customer."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        today = get_jalali_date()
-        txns = TransactionRepository.get_overdue(session, user.id, "receivable", today)
-        cache_key = f"overdue_{user.id}"
-        await _send_grouped_receivable_list(
-            callback.message, txns, RECEIVABLE_OVERDUE,
-            RECEIVABLE_OVERDUE_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    today = get_jalali_date()
+    txns = TransactionRepository.get_overdue( user["id"], "receivable", today)
+    cache_key = f"overdue_{user["id"]}"
+    await _send_grouped_receivable_list(
+        callback.message, txns, RECEIVABLE_OVERDUE,
+        RECEIVABLE_OVERDUE_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "receivable_due_today")
 async def receivable_due_today_list(callback: CallbackQuery):
     """Show receivables due today grouped by customer."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        today = get_jalali_date()
-        txns = TransactionRepository.get_due_today(session, user.id, "receivable", today)
-        cache_key = f"due_today_{user.id}"
-        await _send_grouped_receivable_list(
-            callback.message, txns, RECEIVABLE_DUE_TODAY,
-            RECEIVABLE_DUE_TODAY_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    today = get_jalali_date()
+    txns = TransactionRepository.get_due_today( user["id"], "receivable", today)
+    cache_key = f"due_today_{user["id"]}"
+    await _send_grouped_receivable_list(
+        callback.message, txns, RECEIVABLE_DUE_TODAY,
+        RECEIVABLE_DUE_TODAY_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "receivable_due_week")
 async def receivable_due_week_list(callback: CallbackQuery):
     """Show receivables due this week grouped by customer."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        today = get_jalali_date()
-        week_end = get_week_end_jalali()
-        txns = TransactionRepository.get_due_this_week(session, user.id, "receivable", today, week_end)
-        cache_key = f"due_week_{user.id}"
-        await _send_grouped_receivable_list(
-            callback.message, txns, RECEIVABLE_DUE_WEEK,
-            RECEIVABLE_DUE_WEEK_EMPTY, session, cache_key
-        )
-    finally:
-        session.close()
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    today = get_jalali_date()
+    week_end = get_week_end_jalali()
+    txns = TransactionRepository.get_due_this_week( user["id"], "receivable", today, week_end)
+    cache_key = f"due_week_{user["id"]}"
+    await _send_grouped_receivable_list(
+        callback.message, txns, RECEIVABLE_DUE_WEEK,
+        RECEIVABLE_DUE_WEEK_EMPTY, cache_key
+    )
     await safe_callback_answer(callback)
-
 
 # --- Receivable 3-level hierarchy (active view) ---
 
@@ -4265,7 +3862,7 @@ async def receivable_customer_detail_active(callback: CallbackQuery):
 
     party = group["party"]
     txns = group["txns"]
-    active_txns = [t for t in txns if not t.is_settled]
+    active_txns = [t for t in txns if not t["is_settled"]]
 
     text = f"💵 {party}\n\n"
     text += f"📊 خلاصه مشتری\n"
@@ -4278,34 +3875,29 @@ async def receivable_customer_detail_active(callback: CallbackQuery):
     await callback.message.edit_text(text)
 
     txns_data = []
-    session = get_session()
-    try:
-        for txn in active_txns:
-            due_emoji = ""
-            if txn.due_jalali_date:
-                days_left = get_days_until(txn.due_jalali_date)
-                if days_left < 0:
-                    due_emoji = "🔴"
-                elif days_left == 0:
-                    due_emoji = "🟡"
-                else:
-                    due_emoji = "🟢"
-            label = f"📋 #{txn.id} | {format_amount(txn.amount)} تومان"
-            if due_emoji:
-                label = f"{due_emoji} #{txn.id} | {format_amount(txn.amount)} تومان"
-            txns_data.append({
-                "label": label,
-                "callback_data": f"recv_item_detail:{cache_key}:{safe_party}:{txn.id}"
-            })
-    finally:
-        session.close()
+    for txn in active_txns:
+        due_emoji = ""
+        if txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            if days_left < 0:
+                due_emoji = "🔴"
+            elif days_left == 0:
+                due_emoji = "🟡"
+            else:
+                due_emoji = "🟢"
+        label = f"📋 #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        if due_emoji:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        txns_data.append({
+            "label": label,
+            "callback_data": f"recv_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+        })
 
     await callback.message.answer(
         RECEIVABLE_SELECT_RECV,
         reply_markup=recv_customer_debts_keyboard(txns_data)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_item_detail:"))
 async def receivable_item_detail(callback: CallbackQuery):
@@ -4323,57 +3915,52 @@ async def receivable_item_detail(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn:
-            await safe_callback_answer(callback, "⚠️ طلب یافت نشد.", show_alert=True)
-            return
+    txn = TransactionRepository.get_by_id( txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ طلب یافت نشد.", show_alert=True)
+        return
 
-        remaining = txn.amount
-        if not txn.is_settled:
-            remaining = PaymentRepository.get_remaining(session, txn_id, txn.amount)
+    remaining = txn["amount"]
+    if not txn["is_settled"]:
+        remaining = PaymentRepository.get_remaining( txn_id, txn["amount"])
 
-        text = f"📋 جزئیات طلب\n\n"
-        text += f"🆔 شناسه: {txn.id}\n"
-        text += f"👤 طرف حساب: {txn.party_name or '-'}\n"
-        cat_str = txn.category or "-"
-        if txn.subcategory:
-            cat_str += f" / {txn.subcategory}"
-        text += f"🏷 دسته: {cat_str}\n"
-        text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
-        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
-        if txn.description:
-            text += f"📝 توضیحات: {txn.description}\n"
-        if txn.due_jalali_date:
-            days_left = get_days_until(txn.due_jalali_date)
-            time_str = f" ساعت {txn.due_jalali_time}" if txn.due_jalali_time else ""
-            if txn.is_settled:
-                text += f"📅 سررسید: {txn.due_jalali_date}{time_str}\n"
-            elif days_left < 0:
-                text += f"🔴 سررسید: {txn.due_jalali_date}{time_str} (منقضی)\n"
-            elif days_left == 0:
-                text += f"🟡 سررسید: {txn.due_jalali_date}{time_str} (امروز)\n"
-            else:
-                text += f"🟢 سررسید: {txn.due_jalali_date}{time_str} ({days_left} روز)\n"
-        if txn.card_number:
-            card_fmt = "-".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-            text += f"💳 کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
-        text += f"📅 ثبت: {txn.jalali_date} ساعت {txn.jalali_time}"
+    text = f"📋 جزئیات طلب\n\n"
+    text += f"🆔 شناسه: {txn["id"]}\n"
+    text += f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
+    cat_str = txn["category"] or "-"
+    if txn["subcategory"]:
+        cat_str += f" / {txn["subcategory"]}"
+    text += f"🏷 دسته: {cat_str}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
+    text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    if txn["description"]:
+        text += f"📝 توضیحات: {txn["description"]}\n"
+    if txn["due_jalali_date"]:
+        days_left = get_days_until(txn["due_jalali_date"])
+        time_str = f" ساعت {txn["due_jalali_time"]}" if txn["due_jalali_time"] else ""
+        if txn["is_settled"]:
+            text += f"📅 سررسید: {txn["due_jalali_date"]}{time_str}\n"
+        elif days_left < 0:
+            text += f"🔴 سررسید: {txn["due_jalali_date"]}{time_str} (منقضی)\n"
+        elif days_left == 0:
+            text += f"🟡 سررسید: {txn["due_jalali_date"]}{time_str} (امروز)\n"
+        else:
+            text += f"🟢 سررسید: {txn["due_jalali_date"]}{time_str} ({days_left} روز)\n"
+    if txn["card_number"]:
+        card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn["sheba"]}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
+    text += f"📅 ثبت: {txn["jalali_date"]} ساعت {txn["jalali_time"]}"
 
-        has_photo = bool(txn.photo_path)
-        has_pay_info = bool(txn.card_number or txn.sheba or txn.bank_name)
+    has_photo = bool(txn["photo_path"])
+    has_pay_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
 
-        kb = recv_detail_keyboard(txn_id, cache_key, safe_party, has_photo, remaining, has_pay_info)
-        await callback.message.edit_text(text, reply_markup=kb)
-    finally:
-        session.close()
+    kb = recv_detail_keyboard(txn_id, cache_key, safe_party, has_photo, remaining, has_pay_info)
+    await callback.message.edit_text(text, reply_markup=kb)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_detail_back:"))
 async def receivable_detail_back_handler(callback: CallbackQuery):
@@ -4404,7 +3991,7 @@ async def receivable_detail_back_handler(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    active_txns = [t for t in group["txns"] if not t.is_settled]
+    active_txns = [t for t in group["txns"] if not t["is_settled"]]
 
     text = f"💵 {group['party']}\n\n"
     text += f"📊 خلاصه مشتری\n"
@@ -4415,27 +4002,23 @@ async def receivable_detail_back_handler(callback: CallbackQuery):
     text += "\n────────────────────"
 
     txns_data = []
-    session = get_session()
-    try:
-        for txn in active_txns:
-            due_emoji = ""
-            if txn.due_jalali_date:
-                days_left = get_days_until(txn.due_jalali_date)
-                if days_left < 0:
-                    due_emoji = "🔴"
-                elif days_left == 0:
-                    due_emoji = "🟡"
-                else:
-                    due_emoji = "🟢"
-            label = f"📋 #{txn.id} | {format_amount(txn.amount)} تومان"
-            if due_emoji:
-                label = f"{due_emoji} #{txn.id} | {format_amount(txn.amount)} تومان"
-            txns_data.append({
-                "label": label,
-                "callback_data": f"recv_item_detail:{cache_key}:{safe_party}:{txn.id}"
-            })
-    finally:
-        session.close()
+    for txn in active_txns:
+        due_emoji = ""
+        if txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            if days_left < 0:
+                due_emoji = "🔴"
+            elif days_left == 0:
+                due_emoji = "🟡"
+            else:
+                due_emoji = "🟢"
+        label = f"📋 #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        if due_emoji:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        txns_data.append({
+            "label": label,
+            "callback_data": f"recv_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+        })
 
     await callback.message.edit_text(text)
     await callback.message.answer(
@@ -4443,7 +4026,6 @@ async def receivable_detail_back_handler(callback: CallbackQuery):
         reply_markup=recv_customer_debts_keyboard(txns_data)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("receivable_payment_history:"))
 async def receivable_payment_history(callback: CallbackQuery):
@@ -4454,31 +4036,26 @@ async def receivable_payment_history(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        payments = PaymentRepository.get_by_transaction(session, txn_id)
-        if not payments:
-            await safe_callback_answer(callback, DEBT_PAYMENT_HISTORY_EMPTY, show_alert=True)
-            return
+    payments = PaymentRepository.get_by_transaction( txn_id)
+    if not payments:
+        await safe_callback_answer(callback, DEBT_PAYMENT_HISTORY_EMPTY, show_alert=True)
+        return
 
-        text = f"{DEBT_PAYMENT_HISTORY_TITLE} - طلب #{txn_id}\n\n"
-        total_paid = 0
-        for p in payments:
-            total_paid += p.amount
-            text += f"💰 {format_amount(p.amount)} تومان\n"
-            text += f"📅 {p.jalali_date} ساعت {p.jalali_time}\n"
-            if p.description:
-                text += f"📝 {p.description}\n"
-            if p.photo_path:
-                text += f"📸 رسید: ✅ دارد\n"
-            text += "──────────\n"
-        text += f"\n💰 مجموع دریافتی: {format_amount(total_paid)} تومان"
+    text = f"{DEBT_PAYMENT_HISTORY_TITLE} - طلب #{txn_id}\n\n"
+    total_paid = 0
+    for p in payments:
+        total_paid += p["amount"]
+        text += f"💰 {format_amount(p['amount'])} تومان\n"
+        text += f"📅 {p['jalali_date']} ساعت {p['jalali_time']}\n"
+        if p["description"]:
+            text += f"📝 {p['description']}\n"
+        if p["photo_path"]:
+            text += f"📸 رسید: ✅ دارد\n"
+        text += "──────────\n"
+    text += f"\n💰 مجموع دریافتی: {format_amount(total_paid)} تومان"
 
-        await callback.message.answer(text)
-    finally:
-        session.close()
+    await callback.message.answer(text)
     await safe_callback_answer(callback)
-
 
 # --- Receivable customer detail view (legacy, used by overdue/settled/due_today/due_week) ---
 
@@ -4509,47 +4086,41 @@ async def receivable_customer_detail(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        detail_text = _build_customer_detail_text(group, session)
-        has_pay_info = any(t.card_number or t.sheba or t.bank_name for t in group["txns"])
-        has_active = any(not t.is_settled for t in group["txns"])
+    detail_text = _build_customer_detail_text(group)
+    has_pay_info = any(t["card_number"] or t["sheba"] or t["bank_name"] for t in group["txns"])
+    has_active = any(not t["is_settled"] for t in group["txns"])
 
-        await callback.message.edit_text(detail_text)
+    await callback.message.edit_text(detail_text)
 
-        builder = InlineKeyboardBuilder()
+    builder = InlineKeyboardBuilder()
 
-        # Group-level: pay entire customer ledger
-        if has_active:
-            builder.row(InlineKeyboardButton(
-                text=f"💵 دریافت از {group['party']}",
-                callback_data=f"recv_pay_customer:{cache_key}:{safe_party}"
-            ))
+    # Group-level: pay entire customer ledger
+    if has_active:
+        builder.row(InlineKeyboardButton(
+            text=f"💵 دریافت از {group['party']}",
+            callback_data=f"recv_pay_customer:{cache_key}:{safe_party}"
+        ))
 
-        # Group-level: SMS
-        if has_pay_info:
-            builder.row(InlineKeyboardButton(text="📩 پیامک همه", callback_data=f"recv_group_sms:{cache_key}:{safe_party}"))
+    # Group-level: SMS
+    if has_pay_info:
+        builder.row(InlineKeyboardButton(text="📩 پیامک همه", callback_data=f"recv_group_sms:{cache_key}:{safe_party}"))
 
-        # Item-level: individual payment (advanced mode)
-        active_txns = [t for t in group["txns"] if not t.is_settled]
-        if len(active_txns) > 1:
-            for txn in active_txns[:5]:
-                label = f"#{txn.id} | {format_amount(txn.amount)} تومان"
-                builder.row(InlineKeyboardButton(text=f"💵 پرداخت {label}", callback_data=f"quick_pay_recv:{txn.id}"))
+    # Item-level: individual payment (advanced mode)
+    active_txns = [t for t in group["txns"] if not t["is_settled"]]
+    if len(active_txns) > 1:
+        for txn in active_txns[:5]:
+            label = f"#{txn["id"]} | {format_amount(txn["amount"])} تومان"
+            builder.row(InlineKeyboardButton(text=f"💵 پرداخت {label}", callback_data=f"quick_pay_recv:{txn["id"]}"))
 
-        builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data="recv_group_back"))
-        await callback.message.answer("عملیات:", reply_markup=builder.as_markup())
-    finally:
-        session.close()
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data="recv_group_back"))
+    await callback.message.answer("عملیات:", reply_markup=builder.as_markup())
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "recv_group_back")
 async def receivable_group_back(callback: CallbackQuery):
     """Handle back button from customer detail - return to submenu."""
     await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_group_sms:"))
 async def receivable_group_sms(callback: CallbackQuery):
@@ -4581,7 +4152,7 @@ async def receivable_group_sms(callback: CallbackQuery):
     # Find the first transaction with payment info
     txn_with_info = None
     for txn in group["txns"]:
-        if txn.card_number or txn.sheba or txn.bank_name:
+        if txn["card_number"] or txn["sheba"] or txn["bank_name"]:
             txn_with_info = txn
             break
 
@@ -4616,7 +4187,6 @@ async def receivable_group_sms(callback: CallbackQuery):
         parse_mode="HTML"
     )
 
-
 @router.callback_query(F.data.startswith("recv_group_pay:"))
 async def receivable_group_pay(callback: CallbackQuery, state: FSMContext):
     """Start customer-level payment flow - show customer ledger and prompt for amount."""
@@ -4644,44 +4214,39 @@ async def receivable_group_pay(callback: CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
         return
 
-    active_txns = [t for t in group["txns"] if not t.is_settled]
+    active_txns = [t for t in group["txns"] if not t["is_settled"]]
     if not active_txns:
         await safe_callback_answer(callback, "⚠️ طلب فعالی برای دریافت وجود ندارد.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        total_remaining = 0
-        txn_details = []
-        for txn in active_txns:
-            rem = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            total_remaining += rem
-            txn_details.append(txn)
+    total_remaining = 0
+    txn_details = []
+    for txn in active_txns:
+        rem = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+        total_remaining += rem
+        txn_details.append(txn)
 
-        # Store in state for FIFO processing
-        await state.update_data(
-            payment_type="receivable",
-            customer_party=group["party"],
-            customer_cache_key=cache_key,
-            customer_safe_party=safe_party,
-            customer_total_remaining=total_remaining,
-            customer_txn_ids=[t.id for t in txn_details]
-        )
+    # Store in state for FIFO processing
+    await state.update_data(
+        payment_type="receivable",
+        customer_party=group["party"],
+        customer_cache_key=cache_key,
+        customer_safe_party=safe_party,
+        customer_total_remaining=total_remaining,
+        customer_txn_ids=[t["id"] for t in txn_details]
+    )
 
-        text = f"💵 دریافت طلب\n\n"
-        text += f"👤 مشتری: {group['party']}\n"
-        text += f"💰 بدهی کل: {format_amount(total_remaining)} تومان\n\n"
-        text += f"━━━━━━━━━━━━━━━━━━\n\n"
-        text += f"STEP 1:\n💰 انتخاب نوع پرداخت:\n"
-        text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
-        text += f"└── ✂️ جزئی (ورود مبلغ)"
+    text = f"💵 دریافت طلب\n\n"
+    text += f"👤 مشتری: {group['party']}\n"
+    text += f"💰 بدهی کل: {format_amount(total_remaining)} تومان\n\n"
+    text += f"━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"STEP 1:\n💰 انتخاب نوع پرداخت:\n"
+    text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
+    text += f"└── ✂️ جزئی (ورود مبلغ)"
 
-        await callback.message.answer(text, reply_markup=payment_type_keyboard())
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.answer(text, reply_markup=payment_type_keyboard())
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_pay_customer:"))
 async def recv_pay_customer_start(callback: CallbackQuery, state: FSMContext):
@@ -4710,41 +4275,36 @@ async def recv_pay_customer_start(callback: CallbackQuery, state: FSMContext):
         await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
         return
 
-    active_txns = [t for t in group["txns"] if not t.is_settled]
+    active_txns = [t for t in group["txns"] if not t["is_settled"]]
     if not active_txns:
         await safe_callback_answer(callback, "⚠️ طلب فعالی برای دریافت وجود ندارد.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        total_remaining = 0
-        for txn in active_txns:
-            rem = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            total_remaining += rem
+    total_remaining = 0
+    for txn in active_txns:
+        rem = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+        total_remaining += rem
 
-        await state.update_data(
-            payment_type="receivable",
-            customer_party=group["party"],
-            customer_cache_key=cache_key,
-            customer_safe_party=safe_party,
-            customer_total_remaining=total_remaining,
-            customer_txn_ids=[t.id for t in active_txns]
-        )
+    await state.update_data(
+        payment_type="receivable",
+        customer_party=group["party"],
+        customer_cache_key=cache_key,
+        customer_safe_party=safe_party,
+        customer_total_remaining=total_remaining,
+        customer_txn_ids=[t["id"] for t in active_txns]
+    )
 
-        text = f"💵 دریافت طلب\n\n"
-        text += f"👤 مشتری: {group['party']}\n"
-        text += f"💰 بدهی کل: {format_amount(total_remaining)} تومان\n\n"
-        text += f"━━━━━━━━━━━━━━━━━━\n\n"
-        text += f"STEP 1:\n💰 انتخاب نوع پرداخت:\n"
-        text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
-        text += f"└── ✂️ جزئی (ورود مبلغ)"
+    text = f"💵 دریافت طلب\n\n"
+    text += f"👤 مشتری: {group['party']}\n"
+    text += f"💰 بدهی کل: {format_amount(total_remaining)} تومان\n\n"
+    text += f"━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"STEP 1:\n💰 انتخاب نوع پرداخت:\n"
+    text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
+    text += f"└── ✂️ جزئی (ورود مبلغ)"
 
-        await callback.message.answer(text, reply_markup=payment_type_keyboard())
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.answer(text, reply_markup=payment_type_keyboard())
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
-
 
 # --- Receivable category-filtered lists ---
 
@@ -4757,7 +4317,6 @@ async def receivable_all_cat_menu(callback: CallbackQuery):
     )
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("recv_all_cat:"))
 async def receivable_all_cat_selected(callback: CallbackQuery):
     """Handle category selection for all receivables."""
@@ -4769,36 +4328,28 @@ async def receivable_all_cat_selected(callback: CallbackQuery):
         return
 
     if category == "all":
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=50)
-            await safe_delete(callback.message)
-            cache_key = f"recv_all_{user.id}"
-            await _send_grouped_receivable_list(callback.message, txns, RECEIVABLE_ALL, RECEIVABLE_EMPTY, session, cache_key)
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
+        await safe_delete(callback.message)
+        cache_key = f"recv_all_{user["id"]}"
+        await _send_grouped_receivable_list(callback.message, txns, RECEIVABLE_ALL, RECEIVABLE_EMPTY, cache_key)
         await safe_callback_answer(callback)
         return
 
     subs = RECEIVABLE_CATEGORIES.get(category, [])
     if not subs:
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=50)
-            filtered = _filter_by_category(txns, category=category)
-            await safe_delete(callback.message)
-            cache_key = f"recv_all_{user.id}_{category}"
-            await _send_grouped_receivable_list(callback.message, filtered, f"{RECEIVABLE_ALL} ({category})", RECEIVABLE_EMPTY, session, cache_key)
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
+        filtered = _filter_by_category(txns, category=category)
+        await safe_delete(callback.message)
+        cache_key = f"recv_all_{user["id"]}_{category}"
+        await _send_grouped_receivable_list(callback.message, filtered, f"{RECEIVABLE_ALL} ({category})", RECEIVABLE_EMPTY, cache_key)
         await safe_callback_answer(callback)
         return
 
@@ -4807,7 +4358,6 @@ async def receivable_all_cat_selected(callback: CallbackQuery):
         reply_markup=receivable_subcategory_filter_keyboard("recv_all", category)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_all_sub:"))
 async def receivable_all_sub_selected(callback: CallbackQuery):
@@ -4822,30 +4372,25 @@ async def receivable_all_sub_selected(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=50)
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
 
-        if subcategory != "all":
-            parent_cat = None
-            for cat, subs in RECEIVABLE_CATEGORIES.items():
-                if subcategory in subs:
-                    parent_cat = cat
-                    break
-            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+    if subcategory != "all":
+        parent_cat = None
+        for cat, subs in RECEIVABLE_CATEGORIES.items():
+            if subcategory in subs:
+                parent_cat = cat
+                break
+        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await safe_delete(callback.message)
-        title = f"{RECEIVABLE_ALL} ({subcategory})" if subcategory != "all" else RECEIVABLE_ALL
-        cache_key = f"recv_all_{user.id}_{subcategory}"
-        await _send_grouped_receivable_list(callback.message, txns, title, RECEIVABLE_EMPTY, session, cache_key)
-    finally:
-        session.close()
+    await safe_delete(callback.message)
+    title = f"{RECEIVABLE_ALL} ({subcategory})" if subcategory != "all" else RECEIVABLE_ALL
+    cache_key = f"recv_all_{user["id"]}_{subcategory}"
+    await _send_grouped_receivable_list(callback.message, txns, title, RECEIVABLE_EMPTY, cache_key)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "receivable_settled_cat")
 async def receivable_settled_cat_menu(callback: CallbackQuery):
@@ -4855,7 +4400,6 @@ async def receivable_settled_cat_menu(callback: CallbackQuery):
         reply_markup=receivable_category_filter_keyboard("recv_settled")
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_settled_cat:"))
 async def receivable_settled_cat_selected(callback: CallbackQuery):
@@ -4868,36 +4412,28 @@ async def receivable_settled_cat_selected(callback: CallbackQuery):
         return
 
     if category == "all":
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_with_payments(session, user.id, "receivable")
-            await safe_delete(callback.message)
-            cache_key = f"recv_settled_{user.id}"
-            await _send_settled_customer_list(callback.message, txns, RECEIVABLE_SETTLED, RECEIVABLE_SETTLED_EMPTY, session, cache_key)
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_with_payments( user["id"], "receivable")
+        await safe_delete(callback.message)
+        cache_key = f"recv_settled_{user["id"]}"
+        await _send_settled_customer_list(callback.message, txns, RECEIVABLE_SETTLED, RECEIVABLE_SETTLED_EMPTY, cache_key)
         await safe_callback_answer(callback)
         return
 
     subs = RECEIVABLE_CATEGORIES.get(category, [])
     if not subs:
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_with_payments(session, user.id, "receivable")
-            filtered = _filter_by_category(txns, category=category)
-            await safe_delete(callback.message)
-            cache_key = f"recv_settled_{user.id}_{category}"
-            await _send_settled_customer_list(callback.message, filtered, f"{RECEIVABLE_SETTLED} ({category})", RECEIVABLE_SETTLED_EMPTY, session, cache_key)
-        finally:
-            session.close()
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_with_payments( user["id"], "receivable")
+        filtered = _filter_by_category(txns, category=category)
+        await safe_delete(callback.message)
+        cache_key = f"recv_settled_{user["id"]}_{category}"
+        await _send_settled_customer_list(callback.message, filtered, f"{RECEIVABLE_SETTLED} ({category})", RECEIVABLE_SETTLED_EMPTY, cache_key)
         await safe_callback_answer(callback)
         return
 
@@ -4906,7 +4442,6 @@ async def receivable_settled_cat_selected(callback: CallbackQuery):
         reply_markup=receivable_subcategory_filter_keyboard("recv_settled", category)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_settled_sub:"))
 async def receivable_settled_sub_selected(callback: CallbackQuery):
@@ -4921,30 +4456,25 @@ async def receivable_settled_sub_selected(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_with_payments(session, user.id, "receivable")
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txns = TransactionRepository.get_with_payments( user["id"], "receivable")
 
-        if subcategory != "all":
-            parent_cat = None
-            for cat, subs in RECEIVABLE_CATEGORIES.items():
-                if subcategory in subs:
-                    parent_cat = cat
-                    break
-            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+    if subcategory != "all":
+        parent_cat = None
+        for cat, subs in RECEIVABLE_CATEGORIES.items():
+            if subcategory in subs:
+                parent_cat = cat
+                break
+        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        await safe_delete(callback.message)
-        title = f"{RECEIVABLE_SETTLED} ({subcategory})" if subcategory != "all" else RECEIVABLE_SETTLED
-        cache_key = f"recv_settled_{user.id}_{subcategory}"
-        await _send_settled_customer_list(callback.message, txns, title, RECEIVABLE_SETTLED_EMPTY, session, cache_key)
-    finally:
-        session.close()
+    await safe_delete(callback.message)
+    title = f"{RECEIVABLE_SETTLED} ({subcategory})" if subcategory != "all" else RECEIVABLE_SETTLED
+    cache_key = f"recv_settled_{user["id"]}_{subcategory}"
+    await _send_settled_customer_list(callback.message, txns, title, RECEIVABLE_SETTLED_EMPTY, cache_key)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("rs_cust:"))
 async def receivable_settled_customer_selected(callback: CallbackQuery):
@@ -4988,23 +4518,19 @@ async def receivable_settled_customer_selected(callback: CallbackQuery):
     text += f"📌 {count} مورد\n"
     text += "——————————"
 
-    session = get_session()
-    try:
-        items_data = []
-        for txn in txns:
-            txn_remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            txn_paid = txn.amount - txn_remaining
-            if txn.is_settled or txn_remaining <= 0:
-                label = f"✅ #{txn.id} | {format_amount(txn.amount)} تومان (تسویه شده)"
-            else:
-                label = f"⏳ #{txn.id} | {format_amount(txn_paid)} / {format_amount(txn.amount)} تومان (جزئی)"
-            items_data.append({
-                "label": label,
-                "callback_data": f"rs_item:{txn.id}",
-                "detail_callback": f"rs_item:{txn.id}"
-            })
-    finally:
-        session.close()
+    items_data = []
+    for txn in txns:
+        txn_remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+        txn_paid = txn["amount"] - txn_remaining
+        if txn["is_settled"] or txn_remaining <= 0:
+            label = f"✅ #{txn["id"]} | {format_amount(txn["amount"])} تومان (تسویه شده)"
+        else:
+            label = f"⏳ #{txn["id"]} | {format_amount(txn_paid)} / {format_amount(txn["amount"])} تومان (جزئی)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"rs_item:{txn["id"]}",
+            "detail_callback": f"rs_item:{txn["id"]}"
+        })
 
     await callback.message.edit_text(text)
     await callback.message.answer(
@@ -5012,7 +4538,6 @@ async def receivable_settled_customer_selected(callback: CallbackQuery):
         reply_markup=settled_recv_items_keyboard(items_data, cache_key)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("rs_item:"))
 async def receivable_settled_item_detail(callback: CallbackQuery):
@@ -5023,110 +4548,105 @@ async def receivable_settled_item_detail(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
-    try:
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn:
-            await safe_callback_answer(callback, "⚠️ طلب یافت نشد.", show_alert=True)
-            return
+    txn = TransactionRepository.get_by_id( txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ طلب یافت نشد.", show_alert=True)
+        return
 
-        # Build full detail text
-        payments = PaymentRepository.get_by_transaction(session, txn.id)
-        total_paid = sum(p.amount for p in payments) if payments else 0
-        remaining = max(0, txn.amount - total_paid)
-        is_fully_settled = txn.is_settled or remaining <= 0
+    # Build full detail text
+    payments = PaymentRepository.get_by_transaction( txn["id"])
+    total_paid = sum(p["amount"] for p in payments) if payments else 0
+    remaining = max(0, txn["amount"] - total_paid)
+    is_fully_settled = txn["is_settled"] or remaining <= 0
 
-        if is_fully_settled:
-            text = f"📋 جزئیات طلب تسویه شده\n\n"
-        else:
-            text = f"📋 جزئیات طلب با پرداخت جزئی\n\n"
+    if is_fully_settled:
+        text = f"📋 جزئیات طلب تسویه شده\n\n"
+    else:
+        text = f"📋 جزئیات طلب با پرداخت جزئی\n\n"
 
-        text += f"🆔 شناسه: {txn.id}\n"
-        text += f"👤 مشتری: {txn.party_name or '-'}\n"
+    text += f"🆔 شناسه: {txn["id"]}\n"
+    text += f"👤 مشتری: {txn["party_name"] or '-'}\n"
 
-        cat_str = txn.category or "-"
-        if txn.subcategory:
-            cat_str += f" / {txn.subcategory}"
-        text += f"🏷 دسته‌بندی: {cat_str}\n"
-        text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
-        text += f"💰 مبلغ دریافتی: {format_amount(total_paid)} تومان\n"
-        if remaining > 0:
-            text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    cat_str = txn["category"] or "-"
+    if txn["subcategory"]:
+        cat_str += f" / {txn["subcategory"]}"
+    text += f"🏷 دسته‌بندی: {cat_str}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
+    text += f"💰 مبلغ دریافتی: {format_amount(total_paid)} تومان\n"
+    if remaining > 0:
+        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
 
-        # Settlement date
-        if txn.settled_at:
-            import jdatetime
-            from pytz import timezone as tz
-            iran_tz = tz("Asia/Tehran")
-            settled_local = txn.settled_at.replace(tzinfo=tz("UTC")).astimezone(iran_tz) if txn.settled_at.tzinfo else txn.settled_at.astimezone(iran_tz)
-            settled_jalali = jdatetime.datetime.fromgregorian(datetime=settled_local)
-            text += f"✅ تاریخ تسویه: {settled_jalali.strftime('%Y/%m/%d - %H:%M:%S')}\n"
+    # Settlement date
+    if txn["settled_at"]:
+        import jdatetime
+        from pytz import timezone as tz
+        iran_tz = tz("Asia/Tehran")
+        settled_local = txn["settled_at"].replace(tzinfo=tz("UTC")).astimezone(iran_tz) if txn["settled_at"].tzinfo else txn["settled_at"].astimezone(iran_tz)
+        settled_jalali = jdatetime.datetime.fromgregorian(datetime=settled_local)
+        text += f"✅ تاریخ تسویه: {settled_jalali.strftime('%Y/%m/%d - %H:%M:%S')}\n"
 
-        if txn.description:
-            text += f"📝 توضیحات: {txn.description}\n"
+    if txn["description"]:
+        text += f"📝 توضیحات: {txn["description"]}\n"
 
-        # Due date
-        if txn.due_jalali_date:
-            time_str = f" ساعت {txn.due_jalali_time}" if txn.due_jalali_time else ""
-            text += f"📅 سررسید: {txn.due_jalali_date}{time_str}\n"
+    # Due date
+    if txn["due_jalali_date"]:
+        time_str = f" ساعت {txn["due_jalali_time"]}" if txn["due_jalali_time"] else ""
+        text += f"📅 سررسید: {txn["due_jalali_date"]}{time_str}\n"
 
-        # Photo/attachment - check both transaction photo and payment receipt photos
-        has_photo = bool(txn.photo_path)
-        has_payment_photo = any(p.photo_path for p in payments) if payments else False
-        if has_photo:
-            text += f"📸 عکس: ✅ دارد\n"
-        if has_payment_photo:
-            text += f"📸 رسید پرداخت: ✅ دارد\n"
+    # Photo/attachment - check both transaction photo and payment receipt photos
+    has_photo = bool(txn["photo_path"])
+    has_payment_photo = any(p["photo_path"] for p in payments) if payments else False
+    if has_photo:
+        text += f"📸 عکس: ✅ دارد\n"
+    if has_payment_photo:
+        text += f"📸 رسید پرداخت: ✅ دارد\n"
 
-        # Payment method info
-        if txn.card_number:
-            card_fmt = "-".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-            text += f"💳 شماره کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {txn.bank_name}\n"
+    # Payment method info
+    if txn["card_number"]:
+        card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 شماره کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn["sheba"]}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {txn["bank_name"]}\n"
 
-        # Payment details from payments table
-        if payments:
-            text += f"\n📊 سوابق پرداخت ({len(payments)} فقره):\n"
-            for p in payments:
-                text += f"  💰 {format_amount(p.amount)} تومان"
-                text += f" | {p.jalali_date} ساعت {p.jalali_time}"
-                if p.description:
-                    text += f" | {p.description}"
-                if p.photo_path:
-                    text += f" | 📸 رسید"
-                text += "\n"
+    # Payment details from payments table
+    if payments:
+        text += f"\n📊 سوابق پرداخت ({len(payments)} فقره):\n"
+        for p in payments:
+            text += f"  💰 {format_amount(p['amount'])} تومان"
+            text += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                text += f" | {p['description']}"
+            if p["photo_path"]:
+                text += f" | 📸 رسید"
+            text += "\n"
 
-        # Registration date
-        text += f"\n📅 تاریخ ثبت: {txn.jalali_date} ساعت {txn.jalali_time}"
+    # Registration date
+    text += f"\n📅 تاریخ ثبت: {txn["jalali_date"]} ساعت {txn["jalali_time"]}"
 
-        # Find the cache key for back navigation
-        # We need to determine which cache key this customer belongs to
-        cache_key = ""
-        safe_party = ""
-        async with _recv_groups_lock:
-            for ck, groups_dict in _recv_groups_cache.items():
-                for party, g in groups_dict.items():
-                    for t in g.get("txns", []):
-                        if t.id == txn.id:
-                            cache_key = ck
-                            safe_party = party.replace(":", "_")
-                            break
-                    if cache_key:
+    # Find the cache key for back navigation
+    # We need to determine which cache key this customer belongs to
+    cache_key = ""
+    safe_party = ""
+    async with _recv_groups_lock:
+        for ck, groups_dict in _recv_groups_cache.items():
+            for party, g in groups_dict.items():
+                for t in g.get("txns", []):
+                    if t["id"] == txn["id"]:
+                        cache_key = ck
+                        safe_party = party.replace(":", "_")
                         break
                 if cache_key:
                     break
+            if cache_key:
+                break
 
-        await callback.message.edit_text(
-            text,
-            reply_markup=settled_recv_detail_keyboard(txn.id, cache_key, safe_party, has_photo, has_payment_photo)
-        )
-    finally:
-        session.close()
+    await callback.message.edit_text(
+        text,
+        reply_markup=settled_recv_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, has_payment_photo)
+    )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("rs_bc:"))
 async def receivable_settled_back_to_customers(callback: CallbackQuery):
@@ -5185,7 +4705,6 @@ async def receivable_settled_back_to_customers(callback: CallbackQuery):
     )
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("rs_bi:"))
 async def receivable_settled_back_to_items(callback: CallbackQuery):
     """Navigate back from detail to receivable list."""
@@ -5230,23 +4749,19 @@ async def receivable_settled_back_to_items(callback: CallbackQuery):
     text += f"📌 {count} مورد\n"
     text += "——————————"
 
-    session = get_session()
-    try:
-        items_data = []
-        for txn in txns:
-            txn_remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-            txn_paid = txn.amount - txn_remaining
-            if txn.is_settled or txn_remaining <= 0:
-                label = f"✅ #{txn.id} | {format_amount(txn.amount)} تومان (تسویه شده)"
-            else:
-                label = f"⏳ #{txn.id} | {format_amount(txn_paid)} / {format_amount(txn.amount)} تومان (جزئی)"
-            items_data.append({
-                "label": label,
-                "callback_data": f"rs_item:{txn.id}",
-                "detail_callback": f"rs_item:{txn.id}"
-            })
-    finally:
-        session.close()
+    items_data = []
+    for txn in txns:
+        txn_remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+        txn_paid = txn["amount"] - txn_remaining
+        if txn["is_settled"] or txn_remaining <= 0:
+            label = f"✅ #{txn["id"]} | {format_amount(txn["amount"])} تومان (تسویه شده)"
+        else:
+            label = f"⏳ #{txn["id"]} | {format_amount(txn_paid)} / {format_amount(txn["amount"])} تومان (جزئی)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"rs_item:{txn["id"]}",
+            "detail_callback": f"rs_item:{txn["id"]}"
+        })
 
     await callback.message.edit_text(text)
     await callback.message.answer(
@@ -5254,7 +4769,6 @@ async def receivable_settled_back_to_items(callback: CallbackQuery):
         reply_markup=settled_recv_items_keyboard(items_data, cache_key)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "receivable_receive_cat")
 async def receivable_receive_cat_menu(callback: CallbackQuery):
@@ -5264,7 +4778,6 @@ async def receivable_receive_cat_menu(callback: CallbackQuery):
         reply_markup=receivable_category_filter_keyboard("recv_receive")
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_receive_cat:"))
 async def receivable_receive_cat_selected(callback: CallbackQuery, state: FSMContext):
@@ -5277,49 +4790,41 @@ async def receivable_receive_cat_selected(callback: CallbackQuery, state: FSMCon
         return
 
     if category == "all":
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_active(session, user.id, "receivable")
-            if not txns:
-                await callback.message.edit_text(RECEIVE_RECV_NO_ACTIVE, reply_markup=receivable_submenu())
-                await safe_callback_answer(callback)
-                return
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_active( user["id"], "receivable")
+        if not txns:
+            await callback.message.edit_text(RECEIVE_RECV_NO_ACTIVE, reply_markup=receivable_submenu())
+            await safe_callback_answer(callback)
+            return
 
-            await _send_grouped_customer_pay_list(
-                callback.message, txns, session
-            )
-        finally:
-            session.close()
+        await _send_grouped_customer_pay_list(
+            callback.message, txns
+        )
         await safe_callback_answer(callback)
         return
 
     subs = RECEIVABLE_CATEGORIES.get(category, [])
     if not subs:
-        session = get_session()
-        try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-            if not user:
-                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-                return
-            txns = TransactionRepository.get_active(session, user.id, "receivable")
-            filtered = _filter_by_category(txns, category=category)
-            if not filtered:
-                await callback.message.edit_text(
-                    f"{RECEIVE_RECV_NO_ACTIVE}\n\nدسته: {category}",
-                    reply_markup=receivable_submenu()
-                )
-                await safe_callback_answer(callback)
-                return
-
-            await _send_grouped_customer_pay_list(
-                callback.message, filtered, session
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_active( user["id"], "receivable")
+        filtered = _filter_by_category(txns, category=category)
+        if not filtered:
+            await callback.message.edit_text(
+                f"{RECEIVE_RECV_NO_ACTIVE}\n\nدسته: {category}",
+                reply_markup=receivable_submenu()
             )
-        finally:
-            session.close()
+            await safe_callback_answer(callback)
+            return
+
+        await _send_grouped_customer_pay_list(
+            callback.message, filtered
+        )
         await safe_callback_answer(callback)
         return
 
@@ -5328,7 +4833,6 @@ async def receivable_receive_cat_selected(callback: CallbackQuery, state: FSMCon
         reply_markup=receivable_subcategory_filter_keyboard("recv_receive", category)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("recv_receive_sub:"))
 async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMContext):
@@ -5343,111 +4847,101 @@ async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMCon
         await safe_callback_answer(callback)
         return
 
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_active(session, user.id, "receivable")
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txns = TransactionRepository.get_active( user["id"], "receivable")
 
-        if subcategory != "all":
-            parent_cat = None
-            for cat, subs in RECEIVABLE_CATEGORIES.items():
-                if subcategory in subs:
-                    parent_cat = cat
-                    break
-            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+    if subcategory != "all":
+        parent_cat = None
+        for cat, subs in RECEIVABLE_CATEGORIES.items():
+            if subcategory in subs:
+                parent_cat = cat
+                break
+        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
 
-        if not txns:
-            label = subcategory if subcategory != "all" else ""
-            await callback.message.edit_text(
-                f"{RECEIVE_RECV_NO_ACTIVE}\n\n{label}",
-                reply_markup=receivable_submenu()
-            )
-            await safe_callback_answer(callback)
-            return
-
-        await _send_grouped_customer_pay_list(
-            callback.message, txns, session
+    if not txns:
+        label = subcategory if subcategory != "all" else ""
+        await callback.message.edit_text(
+            f"{RECEIVE_RECV_NO_ACTIVE}\n\n{label}",
+            reply_markup=receivable_submenu()
         )
-    finally:
-        session.close()
-    await safe_callback_answer(callback)
+        await safe_callback_answer(callback)
+        return
 
+    await _send_grouped_customer_pay_list(
+        callback.message, txns
+    )
+    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "receivable_reports")
 async def receivable_reports(callback: CallbackQuery):
     """Show receivable summary report."""
     await safe_delete(callback.message)
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
 
-        all_receivables = TransactionRepository.get_by_user(session, user.id, transaction_type="receivable", limit=1000)
-        today = get_jalali_date()
+    all_receivables = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=1000)
+    today = get_jalali_date()
 
-        total = len(all_receivables)
-        total_amount = sum(t.amount for t in all_receivables)
+    total = len(all_receivables)
+    total_amount = sum(t["amount"] for t in all_receivables)
 
-        # Get receivables with any payments (partial or full)
-        with_payments = TransactionRepository.get_with_payments(session, user.id, "receivable", limit=1000)
-        with_payment_ids = {t.id for t in with_payments}
+    # Get receivables with any payments (partial or full)
+    with_payments = TransactionRepository.get_with_payments(user["id"], "receivable", limit=1000)
+    with_payment_ids = {t["id"] for t in with_payments}
 
-        # Fully settled: is_settled flag OR remaining <= 0
-        fully_settled = [t for t in all_receivables if t.is_settled]
-        # Partially paid: has payments but not fully settled
-        partially_paid = [t for t in with_payments if not t.is_settled]
-        # All with payments (settled + partially paid)
-        all_with_payments = [t for t in all_receivables if t.id in with_payment_ids or t.is_settled]
-        # Active: no payments at all
-        active = [t for t in all_receivables if t.id not in with_payment_ids and not t.is_settled]
-        active_count = len(active)
-        active_amount = sum(t.amount for t in active)
+    # Fully settled: is_settled flag OR remaining <= 0
+    fully_settled = [t for t in all_receivables if t["is_settled"]]
+    # Partially paid: has payments but not fully settled
+    partially_paid = [t for t in with_payments if not t["is_settled"]]
+    # All with payments (settled + partially paid)
+    all_with_payments = [t for t in all_receivables if t["id"] in with_payment_ids or t["is_settled"]]
+    # Active: no payments at all
+    active = [t for t in all_receivables if t["id"] not in with_payment_ids and not t["is_settled"]]
+    active_count = len(active)
+    active_amount = sum(t["amount"] for t in active)
 
-        settled_count = len(all_with_payments)
-        settled_amount = sum(t.amount for t in all_with_payments)
+    settled_count = len(all_with_payments)
+    settled_amount = sum(t["amount"] for t in all_with_payments)
 
-        overdue = [t for t in active if t.due_jalali_date and t.due_jalali_date < today]
-        overdue_count = len(overdue)
-        overdue_amount = sum(t.amount for t in overdue)
+    overdue = [t for t in active if t["due_jalali_date"] and t["due_jalali_date"] < today]
+    overdue_count = len(overdue)
+    overdue_amount = sum(t["amount"] for t in overdue)
 
-        due_today = [t for t in active if t.due_jalali_date == today]
-        due_today_count = len(due_today)
+    due_today = [t for t in active if t["due_jalali_date"] == today]
+    due_today_count = len(due_today)
 
-        # Calculate total paid amount
-        total_paid_amount = 0
-        for t in all_with_payments:
-            payments = PaymentRepository.get_by_transaction(session, t.id)
-            total_paid_amount += sum(p.amount for p in payments) if payments else 0
+    # Calculate total paid amount
+    total_paid_amount = 0
+    for t in all_with_payments:
+        payments = PaymentRepository.get_by_transaction(t["id"])
+        total_paid_amount += sum(p["amount"] for p in payments) if payments else 0
 
-        report = RECEIVABLE_REPORT_TITLE.format(
-            total=total,
-            total_amount=format_amount(total_amount),
-            active=active_count,
-            active_amount=format_amount(active_amount),
-            settled=settled_count,
-            settled_amount=format_amount(settled_amount),
-            overdue=overdue_count,
-            overdue_amount=format_amount(overdue_amount),
-            due_today=due_today_count
-        )
+    report = RECEIVABLE_REPORT_TITLE.format(
+        total=total,
+        total_amount=format_amount(total_amount),
+        active=active_count,
+        active_amount=format_amount(active_amount),
+        settled=settled_count,
+        settled_amount=format_amount(settled_amount),
+        overdue=overdue_count,
+        overdue_amount=format_amount(overdue_amount),
+        due_today=due_today_count
+    )
 
-        # Add partial payment breakdown
-        if partially_paid:
-            partial_amount = sum(t.amount for t in partially_paid)
-            report += f"\n⏳ پرداخت جزئی: {len(partially_paid)} مورد ({format_amount(partial_amount)} تومان)"
-            report += f"\n✅ تسویه کامل: {len(fully_settled)} مورد"
-        report += f"\n💰 مجموع دریافتی: {format_amount(total_paid_amount)} تومان"
+    # Add partial payment breakdown
+    if partially_paid:
+        partial_amount = sum(t["amount"] for t in partially_paid)
+        report += f"\n⏳ پرداخت جزئی: {len(partially_paid)} مورد ({format_amount(partial_amount)} تومان)"
+        report += f"\n✅ تسویه کامل: {len(fully_settled)} مورد"
+    report += f"\n💰 مجموع دریافتی: {format_amount(total_paid_amount)} تومان"
 
-        await callback.message.answer(report, reply_markup=receivable_submenu())
-    finally:
-        session.close()
+    await callback.message.answer(report, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
-
 
 # ==============================
 # Payment Handlers (Pay Debt / Receive Receivable)
@@ -5460,41 +4954,36 @@ async def quick_pay_debt(callback: CallbackQuery, state: FSMContext):
     if txn_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn or txn.user_id != user.id or txn.is_settled:
-            await safe_callback_answer(callback, "⚠️ بدهی یافت نشد یا تسویه شده است.", show_alert=True)
-            return
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txn = TransactionRepository.get_by_id( txn_id)
+    if not txn or txn["user_id"] != user["id"] or txn["is_settled"]:
+        await safe_callback_answer(callback, "⚠️ بدهی یافت نشد یا تسویه شده است.", show_alert=True)
+        return
 
-        remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-        payments_data = {txn.id: remaining}
-        await state.update_data(payment_type="debt", payments_data=payments_data, selected_txn_id=txn.id)
+    remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+    payments_data = {txn["id"]: remaining}
+    await state.update_data(payment_type="debt", payments_data=payments_data, selected_txn_id=txn["id"])
 
-        # Build payment info display
-        text = f"💳 پرداخت بدهی\n\n"
-        text += f"👤 طرف حساب: {txn.party_name or '-'}\n"
-        text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
-        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
-        if txn.card_number:
-            card_fmt = " ".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-            text += f"💳 کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
-        text += f"\nنوع پرداخت را انتخاب کنید:"
+    # Build payment info display
+    text = f"💳 پرداخت بدهی\n\n"
+    text += f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
+    text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    if txn["card_number"]:
+        card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn["sheba"]}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
+    text += f"\nنوع پرداخت را انتخاب کنید:"
 
-        await callback.message.answer(text, reply_markup=payment_type_keyboard())
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.answer(text, reply_markup=payment_type_keyboard())
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("quick_pay_recv:"))
 async def quick_pay_recv(callback: CallbackQuery, state: FSMContext):
@@ -5503,41 +4992,36 @@ async def quick_pay_recv(callback: CallbackQuery, state: FSMContext):
     if txn_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
-    try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn or txn.user_id != user.id or txn.is_settled:
-            await safe_callback_answer(callback, "⚠️ طلب یافت نشد یا تسویه شده است.", show_alert=True)
-            return
+    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+    txn = TransactionRepository.get_by_id( txn_id)
+    if not txn or txn["user_id"] != user["id"] or txn["is_settled"]:
+        await safe_callback_answer(callback, "⚠️ طلب یافت نشد یا تسویه شده است.", show_alert=True)
+        return
 
-        remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-        payments_data = {txn.id: remaining}
-        await state.update_data(payment_type="receivable", payments_data=payments_data, selected_txn_id=txn.id)
+    remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+    payments_data = {txn["id"]: remaining}
+    await state.update_data(payment_type="receivable", payments_data=payments_data, selected_txn_id=txn["id"])
 
-        # Build payment info display
-        text = f"💵 دریافت طلب\n\n"
-        text += f"👤 طرف حساب: {txn.party_name or '-'}\n"
-        text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
-        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
-        if txn.card_number:
-            card_fmt = " ".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-            text += f"💳 کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
-        text += f"\nنوع دریافت را انتخاب کنید:"
+    # Build payment info display
+    text = f"💵 دریافت طلب\n\n"
+    text += f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
+    text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    if txn["card_number"]:
+        card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn["sheba"]}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
+    text += f"\nنوع دریافت را انتخاب کنید:"
 
-        await callback.message.answer(text, reply_markup=payment_type_keyboard())
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.answer(text, reply_markup=payment_type_keyboard())
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(PaymentForm.select, F.data.startswith("pay_select:"))
 async def payment_select_handler(callback: CallbackQuery, state: FSMContext):
@@ -5556,38 +5040,33 @@ async def payment_select_handler(callback: CallbackQuery, state: FSMContext):
     payments_data = fsm_data.get("payments_data", {})
     remaining = payments_data.get(txn_id, 0)
 
-    session = get_session()
-    try:
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn:
-            await safe_callback_answer(callback, "⚠️ تراکنش یافت نشد.", show_alert=True)
-            return
+    txn = TransactionRepository.get_by_id( txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ تراکنش یافت نشد.", show_alert=True)
+        return
 
-        pay_type_name = fsm_data.get("payment_type", "debt")
-        type_emoji = "💳" if pay_type_name == "debt" else "💵"
-        type_label = "بدهی" if pay_type_name == "debt" else "طلب"
-        action_verb = "پرداخت" if pay_type_name == "debt" else "دریافت"
+    pay_type_name = fsm_data.get("payment_type", "debt")
+    type_emoji = "💳" if pay_type_name == "debt" else "💵"
+    type_label = "بدهی" if pay_type_name == "debt" else "طلب"
+    action_verb = "پرداخت" if pay_type_name == "debt" else "دریافت"
 
-        text = f"{type_emoji} {action_verb} {type_label}\n\n"
-        text += f"👤 طرف حساب: {txn.party_name or '-'}\n"
-        text += f"💰 مبلغ کل: {format_amount(txn.amount)} تومان\n"
-        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
-        if txn.card_number:
-            card_fmt = " ".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-            text += f"💳 کارت: {card_fmt}\n"
-        if txn.sheba:
-            text += f"🏦 شبا: {txn.sheba}\n"
-        if txn.bank_name:
-            text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
-        text += f"\nنوع پرداخت را انتخاب کنید:"
+    text = f"{type_emoji} {action_verb} {type_label}\n\n"
+    text += f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn["amount"])} تومان\n"
+    text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    if txn["card_number"]:
+        card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn["sheba"]}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
+    text += f"\nنوع پرداخت را انتخاب کنید:"
 
-        await callback.message.edit_text(text, reply_markup=payment_type_keyboard())
-        await state.update_data(selected_txn_id=txn_id)
-        await state.set_state(PaymentForm.payment_type)
-    finally:
-        session.close()
+    await callback.message.edit_text(text, reply_markup=payment_type_keyboard())
+    await state.update_data(selected_txn_id=txn_id)
+    await state.set_state(PaymentForm.payment_type)
     await safe_callback_answer(callback)
-
 
 @router.callback_query(PaymentForm.payment_type, F.data.startswith("pay_type:"))
 async def payment_type_handler(callback: CallbackQuery, state: FSMContext):
@@ -5612,24 +5091,20 @@ async def payment_type_handler(callback: CallbackQuery, state: FSMContext):
             pay_amount = total_remaining
             # Calculate FIFO distribution for full amount
             txn_ids = data.get("customer_txn_ids", [])
-            session = get_session()
-            try:
-                distribution = []
-                remaining_amount = pay_amount
-                for txn_id in txn_ids:
-                    if remaining_amount <= 0:
-                        break
-                    txn = TransactionRepository.get_by_id(session, txn_id)
-                    if not txn:
-                        continue
-                    txn_remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-                    pay_for_this = min(remaining_amount, txn_remaining)
-                    if pay_for_this > 0:
-                        distribution.append({"txn_id": txn_id, "amount": pay_for_this, "original_amount": txn.amount})
-                        remaining_amount -= pay_for_this
-                await state.update_data(pay_amount=pay_amount, fifo_distribution=distribution)
-            finally:
-                session.close()
+            distribution = []
+            remaining_amount = pay_amount
+            for txn_id in txn_ids:
+                if remaining_amount <= 0:
+                    break
+                txn = TransactionRepository.get_by_id( txn_id)
+                if not txn:
+                    continue
+                txn_remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+                pay_for_this = min(remaining_amount, txn_remaining)
+                if pay_for_this > 0:
+                    distribution.append({"txn_id": txn_id, "amount": pay_for_this, "original_amount": txn["amount"]})
+                    remaining_amount -= pay_for_this
+            await state.update_data(pay_amount=pay_amount, fifo_distribution=distribution)
 
             pay_type_name = data.get("payment_type", "receivable")
             type_emoji = "💳" if pay_type_name == "debt" else "💵"
@@ -5698,7 +5173,6 @@ async def payment_type_handler(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PaymentForm.amount)
     await safe_callback_answer(callback)
 
-
 @router.message(PaymentForm.amount)
 async def payment_amount_handler(message: Message, state: FSMContext):
     """Handle partial payment amount input - supports both single-txn and customer-level FIFO."""
@@ -5726,25 +5200,21 @@ async def payment_amount_handler(message: Message, state: FSMContext):
 
         # Calculate FIFO distribution
         txn_ids = data.get("customer_txn_ids", [])
-        session = get_session()
-        try:
-            distribution = []
-            remaining_amount = amount
-            for txn_id in txn_ids:
-                if remaining_amount <= 0:
-                    break
-                txn = TransactionRepository.get_by_id(session, txn_id)
-                if not txn:
-                    continue
-                txn_remaining = PaymentRepository.get_remaining(session, txn.id, txn.amount)
-                pay_for_this = min(remaining_amount, txn_remaining)
-                if pay_for_this > 0:
-                    distribution.append({"txn_id": txn_id, "amount": pay_for_this, "original_amount": txn.amount})
-                    remaining_amount -= pay_for_this
+        distribution = []
+        remaining_amount = amount
+        for txn_id in txn_ids:
+            if remaining_amount <= 0:
+                break
+            txn = TransactionRepository.get_by_id( txn_id)
+            if not txn:
+                continue
+            txn_remaining = PaymentRepository.get_remaining( txn["id"], txn["amount"])
+            pay_for_this = min(remaining_amount, txn_remaining)
+            if pay_for_this > 0:
+                distribution.append({"txn_id": txn_id, "amount": pay_for_this, "original_amount": txn["amount"]})
+                remaining_amount -= pay_for_this
 
-            await state.update_data(pay_amount=amount, fifo_distribution=distribution)
-        finally:
-            session.close()
+        await state.update_data(pay_amount=amount, fifo_distribution=distribution)
 
         pay_type_name = data.get("payment_type", "receivable")
         type_emoji = "💳" if pay_type_name == "debt" else "💵"
@@ -5784,7 +5254,6 @@ async def payment_amount_handler(message: Message, state: FSMContext):
         reply_markup=customer_skip_menu()
     )
     await state.set_state(PaymentForm.description)
-
 
 @router.message(PaymentForm.description)
 async def payment_description_handler(message: Message, state: FSMContext):
@@ -5835,7 +5304,6 @@ async def payment_description_handler(message: Message, state: FSMContext):
         reply_markup=photo_skip_menu()
     )
     await state.set_state(PaymentForm.photo)
-
 
 @router.message(PaymentForm.photo)
 async def payment_photo_handler(message: Message, state: FSMContext):
@@ -5897,33 +5365,28 @@ async def payment_photo_handler(message: Message, state: FSMContext):
         payments_data = data.get("payments_data", {})
         remaining = payments_data.get(txn_id, 0)
 
-        session = get_session()
-        try:
-            txn = TransactionRepository.get_by_id(session, txn_id)
-            pay_type = data.get("payment_type", "debt")
-            type_label = "بدهی" if pay_type == "debt" else "طلب"
-            type_emoji = "💳" if pay_type == "debt" else "💵"
+        txn = TransactionRepository.get_by_id( txn_id)
+        pay_type = data.get("payment_type", "debt")
+        type_label = "بدهی" if pay_type == "debt" else "طلب"
+        type_emoji = "💳" if pay_type == "debt" else "💵"
 
-            text = f"⚠️ تأیید نهایی\n\n"
-            text += f"├── 👤 مشتری: {txn.party_name or '-'}\n"
-            text += f"├── 💰 مبلغ: {format_amount(pay_amount)} تومان\n"
-            text += f"├── 📝 توضیحات: {pay_description or '—'}\n"
-            text += f"└── 📸 رسید: {'✅ دارد' if data.get('pay_photo') else '❌ ندارد'}\n"
-            text += f"\n💰 باقی‌مانده: {format_amount(max(0, remaining - pay_amount))} تومان\n"
-            if txn.card_number:
-                card_fmt = " ".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
-                text += f"💳 کارت: {card_fmt}\n"
-            if txn.sheba:
-                text += f"🏦 شبا: {txn.sheba}\n"
-            if txn.bank_name:
-                text += f"🏛 بانک: {normalize_bank_name(txn.bank_name)}\n"
+        text = f"⚠️ تأیید نهایی\n\n"
+        text += f"├── 👤 مشتری: {txn["party_name"] or '-'}\n"
+        text += f"├── 💰 مبلغ: {format_amount(pay_amount)} تومان\n"
+        text += f"├── 📝 توضیحات: {pay_description or '—'}\n"
+        text += f"└── 📸 رسید: {'✅ دارد' if data.get('pay_photo') else '❌ ندارد'}\n"
+        text += f"\n💰 باقی‌مانده: {format_amount(max(0, remaining - pay_amount))} تومان\n"
+        if txn["card_number"]:
+            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+            text += f"💳 کارت: {card_fmt}\n"
+        if txn["sheba"]:
+            text += f"🏦 شبا: {txn["sheba"]}\n"
+        if txn["bank_name"]:
+            text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
 
-            has_pay_info = bool(txn.card_number or txn.sheba or txn.bank_name)
-            await message.answer(text, reply_markup=payment_confirm_keyboard(txn.id, has_pay_info))
-            await state.set_state(PaymentForm.confirm)
-        finally:
-            session.close()
-
+        has_pay_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
+        await message.answer(text, reply_markup=payment_confirm_keyboard(txn["id"], has_pay_info))
+        await state.set_state(PaymentForm.confirm)
 
 @router.callback_query(F.data.startswith("pay_sms:"))
 async def payment_sms_callback(callback: CallbackQuery):
@@ -5933,42 +5396,41 @@ async def payment_sms_callback(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn or txn.user_id != user.id:
+        txn = TransactionRepository.get_by_id( txn_id)
+        if not txn or txn["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ مورد یافت نشد.", show_alert=True)
             return
 
-        if not txn.card_number and not txn.sheba and not txn.bank_name:
+        if not txn["card_number"] and not txn["sheba"] and not txn["bank_name"]:
             await safe_callback_answer(callback, "⚠️ اطلاعات پرداختی موجود نیست.", show_alert=True)
             return
 
-        party = txn.party_name or "-"
-        amount_fmt = format_amount(txn.amount)
-        amount_words = amount_to_persian_words(txn.amount)
+        party = txn["party_name"] or "-"
+        amount_fmt = format_amount(txn["amount"])
+        amount_words = amount_to_persian_words(txn["amount"])
 
         lines = []
 
-        if txn.card_number:
-            card_fmt = " ".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
+        if txn["card_number"]:
+            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
             lines.append("کارت:")
             lines.append(card_fmt)
             lines.append("")
 
-        if txn.sheba:
+        if txn["sheba"]:
             lines.append("شبا:")
-            lines.append(txn.sheba)
+            lines.append(txn["sheba"])
             lines.append("")
 
         lines.append(party)
-        if txn.bank_name:
-            lines.append(f"بانک: {normalize_bank_name(txn.bank_name)}")
+        if txn["bank_name"]:
+            lines.append(f"بانک: {normalize_bank_name(txn["bank_name"])}")
         lines.append(f"{amount_fmt} تومان")
         lines.append(amount_words)
 
@@ -5982,9 +5444,6 @@ async def payment_sms_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in payment sms callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در کپی.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(PaymentForm.confirm, F.data.startswith("pay_confirm"))
 async def payment_confirm_handler(callback: CallbackQuery, state: FSMContext):
@@ -6012,10 +5471,8 @@ async def payment_confirm_handler(callback: CallbackQuery, state: FSMContext):
         action_verb = "پرداخت" if pay_type == "debt" else "دریافت"
         payment_type_str = "debt_payment" if pay_type == "debt" else "receivable_payment"
 
-        session = get_session()
         try:
             user = UserRepository.get_or_create(
-                session,
                 telegram_id=callback.from_user.id,
                 username=callback.from_user.username,
                 first_name=callback.from_user.first_name,
@@ -6025,9 +5482,8 @@ async def payment_confirm_handler(callback: CallbackQuery, state: FSMContext):
             settled_ids = []
             for d in distribution:
                 PaymentRepository.create(
-                    session,
                     transaction_id=d["txn_id"],
-                    user_id=user.id,
+                    user_id=user["id"],
                     amount=d["amount"],
                     payment_type=payment_type_str,
                     description=pay_description,
@@ -6036,22 +5492,22 @@ async def payment_confirm_handler(callback: CallbackQuery, state: FSMContext):
                     jalali_time=get_jalali_time(),
                     jalali_full=get_jalali_full()
                 )
-                remaining = PaymentRepository.get_remaining(session, d["txn_id"], d.get("original_amount", d["amount"]))
+                remaining = PaymentRepository.get_remaining( d["txn_id"], d.get("original_amount", d["amount"]))
                 if remaining <= 0:
-                    txn = TransactionRepository.get_by_id(session, d["txn_id"])
+                    txn = TransactionRepository.get_by_id( d["txn_id"])
                     if txn:
-                        TransactionRepository.settle_transaction(session, d["txn_id"])
+                        TransactionRepository.settle_transaction( d["txn_id"])
                         settled_ids.append(d["txn_id"])
 
             # Update customer financial summaries for all affected customers
             updated_customers = set()
             for d in distribution:
-                txn = TransactionRepository.get_by_id(session, d["txn_id"])
-                if txn and txn.customer_id and txn.customer_id not in updated_customers:
-                    CustomerRepository.update_financial_summary(session, txn.customer_id)
-                    updated_customers.add(txn.customer_id)
+                txn = TransactionRepository.get_by_id( d["txn_id"])
+                if txn and txn["customer_id"] and txn["customer_id"] not in updated_customers:
+                    CustomerRepository.update_financial_summary( txn["customer_id"])
+                    updated_customers.add(txn["customer_id"])
 
-            logger.info(f"FIFO payment recorded: {pay_amount} for customer {party} by user {user.telegram_id}")
+            logger.info(f"FIFO payment recorded: {pay_amount} for customer {party} by user {user["telegram_id"]}")
 
             success_msg = (
                 f"✅ {action_verb} {type_label} با موفقیت ثبت شد\n"
@@ -6068,15 +5524,12 @@ async def payment_confirm_handler(callback: CallbackQuery, state: FSMContext):
             logger.error(f"Error processing FIFO payment: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
             await state.clear()
-        finally:
-            session.close()
         await safe_callback_answer(callback)
         return
 
     # Single transaction payment
     txn_id = data.get("selected_txn_id")
     await _process_payment(callback, state, txn_id, pay_amount)
-
 
 async def _process_payment(callback: CallbackQuery, state: FSMContext,
                            txn_id: int, amount: float):
@@ -6089,17 +5542,15 @@ async def _process_payment(callback: CallbackQuery, state: FSMContext,
     pay_description = data.get("pay_description")
     pay_photo = data.get("pay_photo")
 
-    session = get_session()
     try:
         user = UserRepository.get_or_create(
-            session,
             telegram_id=callback.from_user.id,
             username=callback.from_user.username,
             first_name=callback.from_user.first_name,
             last_name=callback.from_user.last_name
         )
 
-        txn = TransactionRepository.get_by_id(session, txn_id)
+        txn = TransactionRepository.get_by_id( txn_id)
         if not txn:
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
             await state.clear()
@@ -6108,9 +5559,8 @@ async def _process_payment(callback: CallbackQuery, state: FSMContext,
 
         # Record payment
         PaymentRepository.create(
-            session,
             transaction_id=txn_id,
-            user_id=user.id,
+            user_id=user["id"],
             amount=amount,
             payment_type=payment_type_str,
             description=pay_description,
@@ -6121,17 +5571,17 @@ async def _process_payment(callback: CallbackQuery, state: FSMContext,
         )
 
         # Check if fully paid
-        remaining = PaymentRepository.get_remaining(session, txn_id, txn.amount)
+        remaining = PaymentRepository.get_remaining( txn_id, txn["amount"])
         settled = False
         if remaining <= 0:
-            TransactionRepository.settle_transaction(session, txn_id)
+            TransactionRepository.settle_transaction( txn_id)
             settled = True
 
         # Update customer financial summary
-        if txn.customer_id:
-            CustomerRepository.update_financial_summary(session, txn.customer_id)
+        if txn["customer_id"]:
+            CustomerRepository.update_financial_summary( txn["customer_id"])
 
-        logger.info(f"Payment recorded: {amount} for {type_label} #{txn_id} by user {user.telegram_id}")
+        logger.info(f"Payment recorded: {amount} for {type_label} #{txn_id} by user {user["telegram_id"]}")
 
         action_verb = "پرداخت" if pay_type == "debt" else "دریافت"
         await state.clear()
@@ -6154,11 +5604,8 @@ async def _process_payment(callback: CallbackQuery, state: FSMContext,
         logger.error(f"Error processing payment: {e}")
         await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
         await state.clear()
-    finally:
-        session.close()
 
     await safe_callback_answer(callback)
-
 
 # ==============================
 # Dashboard
@@ -6168,18 +5615,14 @@ async def _process_payment(callback: CallbackQuery, state: FSMContext,
 @router.message(Command("dashboard"))
 async def show_dashboard(message: Message):
     """Display financial dashboard."""
-    session = get_session()
     try:
-        user = get_user(session, message)
-        dashboard_text = _build_dashboard_text(session, user.id)
+        user = get_user(message)
+        dashboard_text = _build_dashboard_text( user["id"])
         await message.answer(dashboard_text, reply_markup=export_menu())
         await message.answer(MENU_TEXT, reply_markup=main_menu())
     except Exception as e:
         logger.error(f"Error showing dashboard: {e}")
         await message.answer(ERROR_GENERAL)
-    finally:
-        session.close()
-
 
 # ==============================
 # Customer Management
@@ -6191,13 +5634,11 @@ async def customer_management(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("👥 مدیریت مشتریان", reply_markup=customer_menu())
 
-
 @router.message(F.text == "👤 افزودن مشتری")
 async def customer_add_start(message: Message, state: FSMContext):
     """Start add customer flow."""
     await state.set_state(CustomerForm.name)
     await message.answer(CUSTOMER_NAME, reply_markup=cancel_menu())
-
 
 @router.message(CustomerForm.name)
 async def customer_add_name(message: Message, state: FSMContext):
@@ -6212,7 +5653,6 @@ async def customer_add_name(message: Message, state: FSMContext):
     await state.update_data(name=message.text.strip())
     await state.set_state(CustomerForm.phone)
     await message.answer(CUSTOMER_PHONE, reply_markup=customer_skip_menu())
-
 
 @router.message(CustomerForm.phone)
 async def customer_add_phone(message: Message, state: FSMContext):
@@ -6233,7 +5673,6 @@ async def customer_add_phone(message: Message, state: FSMContext):
     await state.set_state(CustomerForm.address)
     await message.answer(CUSTOMER_ADDRESS, reply_markup=customer_skip_menu())
 
-
 @router.message(CustomerForm.address)
 async def customer_add_address(message: Message, state: FSMContext):
     """Handle customer address."""
@@ -6253,7 +5692,6 @@ async def customer_add_address(message: Message, state: FSMContext):
     await state.set_state(CustomerForm.notes)
     await message.answer(CUSTOMER_NOTES, reply_markup=customer_skip_menu())
 
-
 @router.message(CustomerForm.notes)
 async def customer_add_notes(message: Message, state: FSMContext):
     """Handle customer notes and save."""
@@ -6269,18 +5707,16 @@ async def customer_add_notes(message: Message, state: FSMContext):
     notes = "" if message.text == "⏭️ رد کردن" else message.text.strip()
     
     data = await state.get_data()
-    session = get_session()
     try:
-        user = get_user(session, message)
+        user = get_user(message)
         CustomerRepository.create(
-            session,
-            user_id=user.id,
+            user_id=user["id"],
             full_name=data["name"],
             phone=data.get("phone", ""),
             address=data.get("address", ""),
             notes=notes
         )
-        logger.info(f"Customer added: {data['name']} by user {user.telegram_id}")
+        logger.info(f"Customer added: {data['name']} by user {user["telegram_id"]}")
         
         await state.clear()
         await message.answer(
@@ -6290,47 +5726,38 @@ async def customer_add_notes(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error adding customer: {e}")
         await message.answer(ERROR_GENERAL, reply_markup=customer_menu())
-    finally:
-        session.close()
-
 
 @router.message(F.text == "📋 لیست مشتریان")
 async def customer_list(message: Message):
     """Show list of customers."""
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        customers = CustomerRepository.get_by_user(session, user.id)
+    user = get_user(message)
+    customers = CustomerRepository.get_by_user(user["id"])
         
-        if not customers:
-            await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
-            return
+    if not customers:
+        await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
+        return
         
-        text = "👤 لیست مشتریان:\n\n"
-        for i, c in enumerate(customers, 1):
-            debt_str = format_amount(c.total_debt)
-            recv_str = format_amount(c.total_receivable)
-            text += f"{i}. {c.full_name}\n   📞 {c.phone or '-'}\n   💳 بدهی: {debt_str} | طلب: {recv_str}\n\n"
+    text = "👤 لیست مشتریان:\n\n"
+    for i, c in enumerate(customers, 1):
+        debt_str = format_amount(c["total_debt"])
+        recv_str = format_amount(c["total_receivable"])
+        text += f"{i}. {c['full_name']}\n   📞 {c['phone'] or '-'}\n   💳 بدهی: {debt_str} | طلب: {recv_str}\n\n"
         
-        # Simple pagination: show first 10
-        lines = text.split("\n\n")
-        if len(lines) > 15:
-            text = "\n\n".join(lines[:15]) + "\n\n..."
+    # Simple pagination: show first 10
+    lines = text.split("\n\n")
+    if len(lines) > 15:
+        text = "\n\n".join(lines[:15]) + "\n\n..."
         
-        if len(customers) > 10:
-            text += f"\n📊 مجموع: {len(customers)} مشتری"
+    if len(customers) > 10:
+        text += f"\n📊 مجموع: {len(customers)} مشتری"
         
-        await message.answer(text, reply_markup=customer_menu())
-    finally:
-        session.close()
-
+    await message.answer(text, reply_markup=customer_menu())
 
 @router.message(F.text == "🔍 جستجوی مشتری")
 async def customer_search_start(message: Message, state: FSMContext):
     """Start customer search."""
     await state.set_state(CustomerSearchForm.query)
     await message.answer(CUSTOMER_SEARCH, reply_markup=cancel_menu())
-
 
 @router.message(CustomerSearchForm.query)
 async def customer_search_result(message: Message, state: FSMContext):
@@ -6341,48 +5768,38 @@ async def customer_search_result(message: Message, state: FSMContext):
         return
     
     query = message.text
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        customers = CustomerRepository.search(session, user.id, query)
+    user = get_user(message)
+    customers = CustomerRepository.search( user["id"], query)
         
-        if not customers:
-            await message.answer(CUSTOMER_NOT_FOUND, reply_markup=customer_menu())
-            await state.clear()
-            return
-        
-        text = "🔍 نتایج جستجو:\n\n"
-        for c in customers:
-            debt_str = format_amount(c.total_debt)
-            recv_str = format_amount(c.total_receivable)
-            text += f"🆔 {c.id}\n👤 {c.full_name}\n📞 {c.phone or '-'}\n💳 بدهی: {debt_str} | طلب: {recv_str}\n\n"
-        
-        await message.answer(text, reply_markup=customer_menu())
+    if not customers:
+        await message.answer(CUSTOMER_NOT_FOUND, reply_markup=customer_menu())
         await state.clear()
-    finally:
-        session.close()
-
+        return
+        
+    text = "🔍 نتایج جستجو:\n\n"
+    for c in customers:
+        debt_str = format_amount(c["total_debt"])
+        recv_str = format_amount(c["total_receivable"])
+        text += f"🆔 {c['id']}\n👤 {c['full_name']}\n📞 {c['phone'] or '-'}\n💳 بدهی: {debt_str} | طلب: {recv_str}\n\n"
+        
+    await message.answer(text, reply_markup=customer_menu())
+    await state.clear()
 
 @router.message(F.text == "✏️ ویرایش مشتری")
 async def customer_edit_select(message: Message, state: FSMContext):
     """Start customer edit - show customer list for selection."""
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        customers = CustomerRepository.get_by_user(session, user.id)
+    user = get_user(message)
+    customers = CustomerRepository.get_by_user(user["id"])
 
-        if not customers:
-            await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
-            return
+    if not customers:
+        await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
+        return
 
-        await state.set_state(CustomerEditForm.select)
-        await message.answer(
-            "👤 مشتری مورد نظر را برای ویرایش انتخاب کنید:",
-            reply_markup=customer_select_keyboard(customers, action="edit")
-        )
-    finally:
-        session.close()
-
+    await state.set_state(CustomerEditForm.select)
+    await message.answer(
+        "👤 مشتری مورد نظر را برای ویرایش انتخاب کنید:",
+        reply_markup=customer_select_keyboard(customers, action="edit")
+    )
 
 @router.callback_query(CustomerEditForm.select, F.data.startswith("edit_customer:"))
 async def customer_edit_callback(callback: CallbackQuery, state: FSMContext):
@@ -6408,7 +5825,6 @@ async def customer_edit_callback(callback: CallbackQuery, state: FSMContext):
 
     await safe_callback_answer(callback)
 
-
 @router.message(CustomerEditForm.name)
 async def customer_edit_name(message: Message, state: FSMContext):
     """Handle customer edit name."""
@@ -6422,40 +5838,31 @@ async def customer_edit_name(message: Message, state: FSMContext):
         return
     
     data = await state.get_data()
-    session = get_session()
     try:
         name = None if message.text == "-" else message.text
-        CustomerRepository.update(session, data["customer_id"], full_name=name)
+        CustomerRepository.update( data["customer_id"], full_name=name)
         
         await state.clear()
         await message.answer(CUSTOMER_UPDATED, reply_markup=customer_menu())
     except Exception as e:
         logger.error(f"Error updating customer: {e}")
         await message.answer(ERROR_GENERAL)
-    finally:
-        session.close()
-
 
 @router.message(F.text == "🗑 حذف مشتری")
 async def customer_delete_select(message: Message, state: FSMContext):
     """Start customer delete - show customer list for selection."""
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        customers = CustomerRepository.get_by_user(session, user.id)
+    user = get_user(message)
+    customers = CustomerRepository.get_by_user(user["id"])
 
-        if not customers:
-            await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
-            return
+    if not customers:
+        await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
+        return
 
-        await state.set_state(CustomerDeleteForm.select)
-        await message.answer(
-            "👤 مشتری مورد نظر را برای حذف انتخاب کنید:",
-            reply_markup=customer_select_keyboard(customers, action="delete")
-        )
-    finally:
-        session.close()
-
+    await state.set_state(CustomerDeleteForm.select)
+    await message.answer(
+        "👤 مشتری مورد نظر را برای حذف انتخاب کنید:",
+        reply_markup=customer_select_keyboard(customers, action="delete")
+    )
 
 @router.callback_query(CustomerDeleteForm.select, F.data.startswith("delete_customer:"))
 async def customer_delete_callback(callback: CallbackQuery, state: FSMContext):
@@ -6474,12 +5881,8 @@ async def customer_delete_callback(callback: CallbackQuery, state: FSMContext):
         customer_id = int(customer_id_str)
         await state.update_data(customer_id=customer_id)
 
-        session = get_session()
-        try:
-            customer = CustomerRepository.get_by_id(session, customer_id)
-            name = customer.full_name if customer else f"شناسه {customer_id}"
-        finally:
-            session.close()
+        customer = CustomerRepository.get_by_id( customer_id)
+        name = customer["full_name"] if customer else f"شناسه {customer_id}"
 
         await callback.message.edit_text(
             f"⚠️ آیا از حذف مشتری «{name}» اطمینان دارید؟",
@@ -6491,23 +5894,19 @@ async def customer_delete_callback(callback: CallbackQuery, state: FSMContext):
 
     await safe_callback_answer(callback)
 
-
 @router.callback_query(CustomerDeleteForm.confirm)
 async def customer_delete_execute(callback: CallbackQuery, state: FSMContext):
     """Execute customer deletion."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
-            CustomerRepository.delete(session, data["customer_id"])
+            CustomerRepository.delete( data["customer_id"])
             await state.clear()
             await callback.message.edit_text(CUSTOMER_DELETED, reply_markup=None)
             await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
         except Exception as e:
             logger.error(f"Error deleting customer: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
@@ -6515,26 +5914,24 @@ async def customer_delete_execute(callback: CallbackQuery, state: FSMContext):
     
     await safe_callback_answer(callback)
 
-
 # ==============================
 # Financial Reports
 # ==============================
 
 async def _send_report(message: Message, period: str):
     """Generate and send a financial report."""
-    session = get_session()
     try:
-        user = get_user(session, message)
+        user = get_user(message)
         start, end = get_current_jalali_period(period)
         
         transactions = TransactionRepository.get_by_date_range(
-            session, user.id, start, end
+            user_id=user["id"], start_date=start, end_date=end
         )
         
         totals = {"income": 0, "expense": 0, "debt": 0, "receivable": 0}
         for txn in transactions:
-            if txn.transaction_type in totals:
-                totals[txn.transaction_type] += txn.amount
+            if txn["transaction_type"] in totals:
+                totals[txn["transaction_type"]] += txn["amount"]
         
         income = totals["income"]
         expense = totals["expense"]
@@ -6568,9 +5965,6 @@ async def _send_report(message: Message, period: str):
     except Exception as e:
         logger.error(f"Error generating report: {e}")
         await message.answer(ERROR_GENERAL)
-    finally:
-        session.close()
-
 
 @router.message(F.text == "📈 گزارش‌های مالی")
 @router.message(Command("report"))
@@ -6578,30 +5972,25 @@ async def show_report_menu(message: Message):
     """Show report menu."""
     await message.answer("📈 گزارش‌های مالی", reply_markup=report_menu())
 
-
 @router.message(F.text == "📅 گزارش روزانه")
 async def report_daily(message: Message):
     """Show daily report."""
     await _send_report(message, "daily")
-
 
 @router.message(F.text == "📅 گزارش هفتگی")
 async def report_weekly(message: Message):
     """Show weekly report."""
     await _send_report(message, "weekly")
 
-
 @router.message(F.text == "📅 گزارش ماهانه")
 async def report_monthly(message: Message):
     """Show monthly report."""
     await _send_report(message, "monthly")
 
-
 @router.message(F.text == "📅 گزارش سالانه")
 async def report_yearly(message: Message):
     """Show yearly report."""
     await _send_report(message, "yearly")
-
 
 # ==============================
 # Export Handlers
@@ -6612,15 +6001,14 @@ async def handle_export(callback: CallbackQuery):
     """Handle export requests."""
     export_type = callback.data.replace("export_", "")
     
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await callback.message.edit_text(ACCESS_DENIED)
             await safe_callback_answer(callback)
             return
         
-        transactions = TransactionRepository.get_by_user(session, user.id, limit=1000)
+        transactions = TransactionRepository.get_by_user(user["id"], limit=1000)
         
         if not transactions:
             await callback.message.edit_text("📭 هیچ تراکنشی برای خروجی وجود ندارد.")
@@ -6649,11 +6037,8 @@ async def handle_export(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Export error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
-    finally:
-        session.close()
     
     await safe_callback_answer(callback)
-
 
 # ==============================
 # Search
@@ -6665,7 +6050,6 @@ async def search_start(message: Message, state: FSMContext):
     """Start search flow."""
     await state.set_state(SearchForm.query)
     await message.answer(SEARCH_PROMPT, reply_markup=cancel_menu())
-
 
 @router.message(SearchForm.query)
 async def search_query(message: Message, state: FSMContext):
@@ -6679,7 +6063,6 @@ async def search_query(message: Message, state: FSMContext):
     await state.set_state(SearchForm.transaction_type)
     await message.answer("نوع تراکنش را انتخاب کنید:", reply_markup=transaction_type_keyboard())
 
-
 @router.callback_query(F.data.in_(["search_type_income", "search_type_expense", "search_type_debt", "search_type_receivable", "search_type_all"]))
 async def search_type_selected(callback: CallbackQuery, state: FSMContext):
     """Process search type filter."""
@@ -6690,17 +6073,15 @@ async def search_type_selected(callback: CallbackQuery, state: FSMContext):
     if ttype == "all":
         ttype = None
     
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await callback.message.edit_text(ACCESS_DENIED)
             await safe_callback_answer(callback)
             return
         
         results = TransactionRepository.search(
-            session,
-            user_id=user.id,
+            user_id=user["id"],
             query_text=query,
             transaction_type=ttype,
             limit=20
@@ -6720,13 +6101,13 @@ async def search_type_selected(callback: CallbackQuery, state: FSMContext):
             
             text = f"🔍 نتایج جستجو برای «{query}»:\n\n"
             for txn in results[:10]:
-                icon = type_icons.get(txn.transaction_type, "📄")
-                tname = type_names.get(txn.transaction_type, txn.transaction_type)
+                icon = type_icons.get(txn["transaction_type"], "📄")
+                tname = type_names.get(txn["transaction_type"], txn["transaction_type"])
                 text += f"{icon} {tname}\n"
-                text += f"💵 {format_amount(txn.amount)} تومان\n"
-                if txn.description:
-                    text += f"📝 {txn.description}\n"
-                text += f"📅 {txn.jalali_date} ساعت {txn.jalali_time}\n\n"
+                text += f"💵 {format_amount(txn["amount"])} تومان\n"
+                if txn["description"]:
+                    text += f"📝 {txn["description"]}\n"
+                text += f"📅 {txn["jalali_date"]} ساعت {txn["jalali_time"]}\n\n"
             
             if len(results) > 10:
                 text += f"\n... و {len(results) - 10} نتیجه دیگر"
@@ -6737,11 +6118,8 @@ async def search_type_selected(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Search error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
-    finally:
-        session.close()
     
     await safe_callback_answer(callback)
-
 
 # ==============================
 # Backup
@@ -6753,15 +6131,13 @@ async def backup_menu_handler(message: Message):
     """Show backup menu."""
     await message.answer("💾 پشتیبان‌گیری\n\nاز این بخش می‌توانید از دیتابیس خود پشتیبان تهیه کنید.", reply_markup=backup_menu())
 
-
 @router.callback_query(F.data == "backup_create")
 async def backup_create(callback: CallbackQuery):
     """Create database backup."""
     await callback.message.edit_text("⏳ در حال ایجاد پشتیبان...")
     
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await callback.message.edit_text(ACCESS_DENIED)
             await safe_callback_answer(callback)
@@ -6782,8 +6158,7 @@ async def backup_create(callback: CallbackQuery):
         
         # Save backup record
         BackupRepository.create(
-            session,
-            user_id=user.id,
+            user_id=user["id"],
             filename=backup_filename,
             file_size=file_size,
             jalali_date=get_jalali_date(),
@@ -6802,11 +6177,8 @@ async def backup_create(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Backup error: {e}")
         await callback.message.edit_text(BACKUP_ERROR)
-    finally:
-        session.close()
     
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "backup_restore")
 async def backup_restore(callback: CallbackQuery):
@@ -6839,13 +6211,11 @@ async def backup_restore(callback: CallbackQuery):
     await callback.message.edit_text(text)
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data == "backup_list")
 async def backup_list(callback: CallbackQuery):
     """Show backup list."""
-    session = get_session()
     try:
-        backups = BackupRepository.get_recent(session)
+        backups = BackupRepository.get_recent()
         if not backups:
             await callback.message.edit_text(BACKUP_LIST_EMPTY)
         else:
@@ -6858,11 +6228,8 @@ async def backup_list(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Backup list error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
-    finally:
-        session.close()
     
     await safe_callback_answer(callback)
-
 
 # ==============================
 # Settings
@@ -6871,47 +6238,36 @@ async def backup_list(callback: CallbackQuery):
 @router.message(F.text == "⚙️ تنظیمات")
 async def settings_handler(message: Message):
     """Show settings menu."""
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        text = f"⚙️ تنظیمات\n\n👤 نام: {user.first_name or 'کاربر'}\n🆔 شناسه: {user.telegram_id}\n👑 مدیر: {'✅' if user.is_admin else '❌'}"
-        await message.answer(text, reply_markup=settings_menu())
-    finally:
-        session.close()
-
+    user = get_user(message)
+    text = f"⚙️ تنظیمات\n\n👤 نام: {user["first_name"] or 'کاربر'}\n🆔 شناسه: {user["telegram_id"]}\n👑 مدیر: {'✅' if user["is_admin"] else '❌'}"
+    await message.answer(text, reply_markup=settings_menu())
 
 @router.message(F.text == "👤 اطلاعات کاربری")
 async def user_info(message: Message):
     """Show user info."""
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        
-        # Get transaction counts
-        txn_count = len(TransactionRepository.get_by_user(session, user.id, limit=1000))
-        customer_count = len(CustomerRepository.get_by_user(session, user.id))
-        
-        text = f"""👤 اطلاعات کاربری
+    user = get_user(message)
 
-🆔 شناسه: {user.telegram_id}
-📝 نام کاربری: @{user.username or 'ندارد'}
-👤 نام: {user.first_name or 'ندارد'}
+    # Get transaction counts
+    txn_count = len(TransactionRepository.get_by_user(user["id"], limit=1000))
+    customer_count = len(CustomerRepository.get_by_user(user["id"]))
+
+    text = f"""👤 اطلاعات کاربری
+
+🆔 شناسه: {user["telegram_id"]}
+📝 نام کاربری: @{user.get("username") or 'ندارد'}
+👤 نام: {user.get("first_name") or 'ندارد'}
 📅 تاریخ ثبت: {get_jalali_date()} ساعت {get_jalali_time()}
 
 📊 آمار:
 📄 تعداد تراکنش‌ها: {txn_count}
 👥 تعداد مشتریان: {customer_count}"""
-        
-        await message.answer(text, reply_markup=settings_menu())
-    finally:
-        session.close()
 
+    await message.answer(text, reply_markup=settings_menu())
 
 @router.message(F.text == "📊 خلاصه حساب")
 async def account_summary(message: Message):
     """Show account summary."""
     await show_dashboard(message)
-
 
 # ==============================
 # View Photo Handler
@@ -6924,18 +6280,17 @@ async def view_photo_callback(callback: CallbackQuery):
     if txn_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
     try:
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn or not txn.photo_path:
+        txn = TransactionRepository.get_by_id( txn_id)
+        if not txn or not txn["photo_path"]:
             await safe_callback_answer(callback, "⚠️ عکسی برای این تراکنش وجود ندارد.", show_alert=True)
             return
         
-        if os.path.exists(txn.photo_path):
-            photo = FSInputFile(txn.photo_path)
+        if os.path.exists(txn["photo_path"]):
+            photo = FSInputFile(txn["photo_path"])
             await callback.message.answer_photo(
                 photo,
-                caption=f"📸 عکس تراکنش (شناسه: {txn.id})"
+                caption=f"📸 عکس تراکنش (شناسه: {txn["id"]})"
             )
             await safe_callback_answer(callback)
         else:
@@ -6943,9 +6298,6 @@ async def view_photo_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error viewing photo: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در نمایش عکس.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("view_payment_photo:"))
 async def view_payment_photo_callback(callback: CallbackQuery):
@@ -6954,35 +6306,30 @@ async def view_payment_photo_callback(callback: CallbackQuery):
     if txn_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
     try:
-        payments = PaymentRepository.get_by_transaction(session, txn_id)
-        photo_payments = [p for p in payments if p.photo_path]
+        payments = PaymentRepository.get_by_transaction( txn_id)
+        photo_payments = [p for p in payments if p["photo_path"]]
         if not photo_payments:
             await safe_callback_answer(callback, "⚠️ عکس رسید پرداختی وجود ندارد.", show_alert=True)
             return
 
         for p in photo_payments:
-            if os.path.exists(p.photo_path):
-                photo = FSInputFile(p.photo_path)
+            if os.path.exists(p["photo_path"]):
+                photo = FSInputFile(p["photo_path"])
                 await callback.message.answer_photo(
                     photo,
-                    caption=f"📸 رسید پرداخت ({format_amount(p.amount)} تومان - {p.jalali_date})"
+                    caption=f"📸 رسید پرداخت ({format_amount(p['amount'])} تومان - {p['jalali_date']})"
                 )
             else:
-                await callback.message.answer(f"⚠️ فایل رسید پرداخت #{p.id} در سرور یافت نشد.")
+                await callback.message.answer(f"⚠️ فایل رسید پرداخت #{p['id']} در سرور یافت نشد.")
         await safe_callback_answer(callback)
     except Exception as e:
         logger.error(f"Error viewing payment photo: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در نمایش عکس.", show_alert=True)
-    finally:
-        session.close()
-
 
 # ==============================
 # Card & Sheba Handlers
 # ==============================
-
 
 def _group_cards_by_owner(cards: list) -> list:
     """Group cards by customer name (similar to _group_receivables_by_customer).
@@ -6997,11 +6344,11 @@ def _group_cards_by_owner(cards: list) -> list:
     """
     groups = {}
     for card in cards:
-        key = card.name or "-"
+        key = card["name"] or "-"
         if key not in groups:
             groups[key] = {
                 "name": key,
-                "customer_id": card.customer_id,
+                "customer_id": card["customer_id"],
                 "cards": [],
                 "count": 0,
             }
@@ -7010,7 +6357,6 @@ def _group_cards_by_owner(cards: list) -> list:
 
     result = sorted(groups.values(), key=lambda g: (-g["count"], g["name"]))
     return result
-
 
 def _build_card_group_summary_text(groups: list, title: str) -> str:
     """Build summary text for the card customer overview."""
@@ -7036,7 +6382,6 @@ def _build_card_group_summary_text(groups: list, title: str) -> str:
 
     return text
 
-
 def _build_card_owner_detail_text(group: dict) -> str:
     """Build detailed view of a customer's cards."""
     name = group["name"]
@@ -7048,115 +6393,105 @@ def _build_card_owner_detail_text(group: dict) -> str:
     text += "——————————"
 
     for card in cards:
-        text += f"\n\n💳 #{card.id}"
-        if card.card_number:
-            card_fmt = "-".join([card.card_number[i:i+4] for i in range(0, 16, 4)])
+        text += f"\n\n💳 #{card["id"]}"
+        if card["card_number"]:
+            card_fmt = "-".join([card["card_number"][i:i+4] for i in range(0, 16, 4)])
             text += f"\n   💳 کارت: {card_fmt}"
-        if card.sheba:
-            text += f"\n   🏦 شبا: IR{card.sheba}"
-        if card.bank_name:
-            text += f"\n   🏛 بانک: {normalize_bank_name(card.bank_name)}"
-        text += f"\n   📅 ثبت: {card.created_at.strftime('%Y/%m/%d') if card.created_at else '-'}"
+        if card["sheba"]:
+            text += f"\n   🏦 شبا: IR{card["sheba"]}"
+        if card["bank_name"]:
+            text += f"\n   🏛 بانک: {normalize_bank_name(card["bank_name"])}"
+        text += f"\n   📅 ثبت: {card["created_at"].strftime('%Y/%m/%d') if card["created_at"] else '-'}"
 
     return text
 
-
 def _build_card_detail_text(card) -> str:
     """Build full detail text for a single card."""
-    card_display = card.card_number or "—"
-    sheba_display = f"IR{card.sheba}" if card.sheba else "—"
-    bank_display = normalize_bank_name(card.bank_name) or "—"
+    card_display = card["card_number"] or "—"
+    sheba_display = f"IR{card["sheba"]}" if card["sheba"] else "—"
+    bank_display = normalize_bank_name(card["bank_name"]) or "—"
 
-    text = f"""💳 {card.name}
+    text = f"""💳 {card["name"]}
 
 💳 شماره کارت: <code>{card_display}</code>
 🏦 شماره شبا: <code>{sheba_display}</code>
 🏛 نام بانک: {bank_display}
-📅 ثبت: {card.created_at.strftime('%Y/%m/%d') if card.created_at else '-'}"""
+📅 ثبت: {card["created_at"].strftime('%Y/%m/%d') if card["created_at"] else '-'}"""
     return text
 
-
-def _get_card_linked_counts(session: Session, user_id: int, card_number: str = None, sheba: str = None) -> dict:
+def _get_card_linked_counts(user_id: int, card_number: str = None, sheba: str = None) -> dict:
     """Count linked debts, receivables, and payments for a card."""
     debt_count = 0
     recv_count = 0
     payment_count = 0
 
+    transactions = get_collection("transactions")
+    payments_col = get_collection("payments")
+
     if card_number:
-        debt_count += session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == "debt",
-            Transaction.card_number == card_number
-        ).count()
-        recv_count += session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == "receivable",
-            Transaction.card_number == card_number
-        ).count()
+        debt_count += transactions.count_documents({
+            "user_id": user_id, "transaction_type": "debt", "card_number": card_number
+        })
+        recv_count += transactions.count_documents({
+            "user_id": user_id, "transaction_type": "receivable", "card_number": card_number
+        })
 
     if sheba:
         sheba_with_ir = f"IR{sheba}" if not sheba.startswith("IR") else sheba
         sheba_without_ir = sheba.replace("IR", "") if sheba.startswith("IR") else sheba
-        debt_count += session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == "debt",
-            Transaction.sheba.in_([sheba_with_ir, sheba_without_ir])
-        ).count()
-        recv_count += session.query(Transaction).filter(
-            Transaction.user_id == user_id,
-            Transaction.transaction_type == "receivable",
-            Transaction.sheba.in_([sheba_with_ir, sheba_without_ir])
-        ).count()
+        debt_count += transactions.count_documents({
+            "user_id": user_id, "transaction_type": "debt",
+            "sheba": {"$in": [sheba_with_ir, sheba_without_ir]}
+        })
+        recv_count += transactions.count_documents({
+            "user_id": user_id, "transaction_type": "receivable",
+            "sheba": {"$in": [sheba_with_ir, sheba_without_ir]}
+        })
 
-    # Count payments linked to transactions with this card
     if card_number or sheba:
         txn_ids = []
         if card_number:
-            txns = session.query(Transaction.id).filter(
-                Transaction.user_id == user_id,
-                Transaction.card_number == card_number
-            ).all()
-            txn_ids.extend([t.id for t in txns])
+            for t in transactions.find({"user_id": user_id, "card_number": card_number}, {"id": 1}):
+                txn_ids.append(t["id"])
         if sheba:
             sheba_with_ir = f"IR{sheba}" if not sheba.startswith("IR") else sheba
             sheba_without_ir = sheba.replace("IR", "") if sheba.startswith("IR") else sheba
-            txns = session.query(Transaction.id).filter(
-                Transaction.user_id == user_id,
-                Transaction.sheba.in_([sheba_with_ir, sheba_without_ir])
-            ).all()
-            txn_ids.extend([t.id for t in txns])
+            for t in transactions.find({"user_id": user_id, "sheba": {"$in": [sheba_with_ir, sheba_without_ir]}}, {"id": 1}):
+                txn_ids.append(t["id"])
 
         if txn_ids:
-            payment_count = session.query(Payment).filter(
-                Payment.user_id == user_id,
-                Payment.transaction_id.in_(list(set(txn_ids)))
-            ).count()
+            payment_count = payments_col.count_documents({
+                "user_id": user_id, "transaction_id": {"$in": list(set(txn_ids))}
+            })
 
     return {"debt": debt_count, "recv": recv_count, "payment": payment_count}
 
 
-def _get_linked_transactions(session: Session, user_id: int, card_number: str = None,
+def _get_linked_transactions(user_id: int, card_number: str = None,
                              sheba: str = None, txn_type: str = None) -> list:
     """Get transactions linked to a specific card."""
-    conditions = [Transaction.user_id == user_id]
+    transactions = get_collection("transactions")
+    query = {"user_id": user_id}
 
     if txn_type:
-        conditions.append(Transaction.transaction_type == txn_type)
+        query["transaction_type"] = txn_type
 
     card_conditions = []
     if card_number:
-        card_conditions.append(Transaction.card_number == card_number)
+        card_conditions.append({"card_number": card_number})
     if sheba:
         sheba_with_ir = f"IR{sheba}" if not sheba.startswith("IR") else sheba
         sheba_without_ir = sheba.replace("IR", "") if sheba.startswith("IR") else sheba
-        card_conditions.append(Transaction.sheba.in_([sheba_with_ir, sheba_without_ir]))
+        card_conditions.append({"sheba": {"$in": [sheba_with_ir, sheba_without_ir]}})
 
     if card_conditions:
-        from sqlalchemy import or_
-        conditions.append(or_(*card_conditions))
+        query["$or"] = card_conditions
 
-    return session.query(Transaction).filter(*conditions).order_by(Transaction.id.desc()).all()
-
+    result = []
+    for txn in transactions.find(query).sort("id", -1):
+        txn.pop("_id", None)
+        result.append(txn)
+    return result
 
 def _build_linked_txn_text(txns: list, txn_type: str, card_name: str) -> str:
     """Build text for linked transactions."""
@@ -7166,28 +6501,27 @@ def _build_linked_txn_text(txns: list, txn_type: str, card_name: str) -> str:
     if not txns:
         return f"📭 هیچ {type_label} مرتبطی با کارت {card_name} یافت نشد."
 
-    total = sum(t.amount for t in txns)
+    total = sum(t["amount"] for t in txns)
     text = f"{type_emoji} {type_label}‌های مرتبط با کارت {card_name}\n\n"
     text += f"📊 تعداد: {len(txns)} مورد | 💰 مجموع: {format_amount(total)} تومان\n"
     text += "——————————"
 
     for i, txn in enumerate(txns[:10], 1):  # Show max 10
-        text += f"\n\n{type_emoji} #{txn.id}"
-        text += f"\n   💰 مبلغ: {format_amount(txn.amount)} تومان"
-        if txn.party_name:
-            text += f"\n   👤 {txn.party_name}"
-        if txn.description:
-            text += f"\n   📝 {txn.description[:30]}"
-        if txn.is_settled:
+        text += f"\n\n{type_emoji} #{txn["id"]}"
+        text += f"\n   💰 مبلغ: {format_amount(txn["amount"])} تومان"
+        if txn["party_name"]:
+            text += f"\n   👤 {txn["party_name"]}"
+        if txn["description"]:
+            text += f"\n   📝 {txn["description"][:30]}"
+        if txn["is_settled"]:
             text += f"\n   ✅ تسویه شده"
-        elif txn.due_jalali_date:
-            text += f"\n   📅 سررسید: {txn.due_jalali_date}"
+        elif txn["due_jalali_date"]:
+            text += f"\n   📅 سررسید: {txn["due_jalali_date"]}"
 
     if len(txns) > 10:
         text += f"\n\n... و {len(txns) - 10} مورد دیگر"
 
     return text
-
 
 def _group_cards_by_owner_filtered(cards: list, sort_by: str = "count", filter_by: str = "all") -> list:
     """Group cards by owner with sorting and filtering."""
@@ -7223,12 +6557,10 @@ def _group_cards_by_owner_filtered(cards: list, sort_by: str = "count", filter_b
 
     return groups
 
-
 @router.message(F.text == "💳 ثبت شماره کارت و شبا")
 async def card_info_menu(message: Message):
     """Show card & sheba submenu."""
     await message.answer(CARD_MENU, reply_markup=card_submenu())
-
 
 @router.callback_query(F.data == "card_register")
 async def card_register_from_submenu(callback: CallbackQuery, state: FSMContext):
@@ -7238,18 +6570,16 @@ async def card_register_from_submenu(callback: CallbackQuery, state: FSMContext)
     await callback.message.answer(CARD_NAME_CHOICE, reply_markup=card_name_choice_keyboard())
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data == "card_all")
 async def card_all_callback(callback: CallbackQuery):
     """Show all cards grouped by owner name."""
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        cards = CardInfoRepository.get_by_user(session, user.id)
+        cards = CardInfoRepository.get_by_user(user["id"])
 
         if not cards:
             await callback.message.edit_text(CARD_EMPTY, reply_markup=card_submenu())
@@ -7259,7 +6589,7 @@ async def card_all_callback(callback: CallbackQuery):
         groups = _group_cards_by_owner(cards)
 
         # Generate cache key and store groups
-        cache_key = f"c{user.id}_{int(time.time())}"
+        cache_key = f"c{user["id"]}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[cache_key] = {g["name"]: g for g in groups}
             _evict_cache(_card_groups_cache)
@@ -7282,9 +6612,6 @@ async def card_all_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_all_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("card_cust_detail:"))
 async def card_cust_detail_callback(callback: CallbackQuery):
@@ -7321,19 +6648,18 @@ async def card_cust_detail_callback(callback: CallbackQuery):
     # Build items data
     items_data = []
     for card in group["cards"]:
-        label = f"💳 #{card.id}"
-        if card.card_number:
-            label += f" | {card.card_number[-4:]}****"
-        if card.sheba:
-            label += f" | IR{card.sheba[-4:]}****"
+        label = f"💳 #{card["id"]}"
+        if card["card_number"]:
+            label += f" | {card["card_number"][-4:]}****"
+        if card["sheba"]:
+            label += f" | IR{card["sheba"][-4:]}****"
         items_data.append({
             "label": label,
-            "detail_callback": f"card_detail:{card.id}:{cache_key}:{safe_name}"
+            "detail_callback": f"card_detail:{card["id"]}:{cache_key}:{safe_name}"
         })
 
     await callback.message.edit_text(text, reply_markup=card_items_keyboard(items_data, cache_key))
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("card_detail:"))
 async def card_detail_callback(callback: CallbackQuery):
@@ -7347,24 +6673,23 @@ async def card_detail_callback(callback: CallbackQuery):
     cache_key = parts[2]
     safe_name = parts[3]
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد.", show_alert=True)
             return
 
         # Get linked transaction counts
-        linked_counts = _get_card_linked_counts(session, user.id, card.card_number, card.sheba)
+        linked_counts = _get_card_linked_counts(user["id"], card["card_number"], card["sheba"])
 
         text = _build_card_detail_text(card)
         keyboard = card_detail_keyboard(
-            card.id, cache_key, safe_name,
+            card["id"], cache_key, safe_name,
             debt_count=linked_counts["debt"],
             recv_count=linked_counts["recv"],
             payment_count=linked_counts["payment"]
@@ -7375,16 +6700,12 @@ async def card_detail_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_detail_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data == "card_group_back")
 async def card_group_back_callback(callback: CallbackQuery):
     """Back to card submenu from any level."""
     await callback.message.edit_text(CARD_MENU, reply_markup=card_submenu())
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("card_back:"))
 async def card_back_callback(callback: CallbackQuery):
@@ -7423,7 +6744,6 @@ async def card_back_callback(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=card_owner_overview_keyboard(buttons_data, cache_key))
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("card_detail_back:"))
 async def card_detail_back_callback(callback: CallbackQuery):
     """Back to card items list from card detail."""
@@ -7457,19 +6777,18 @@ async def card_detail_back_callback(callback: CallbackQuery):
 
     items_data = []
     for card in group["cards"]:
-        label = f"💳 #{card.id}"
-        if card.card_number:
-            label += f" | {card.card_number[-4:]}****"
-        if card.sheba:
-            label += f" | IR{card.sheba[-4:]}****"
+        label = f"💳 #{card["id"]}"
+        if card["card_number"]:
+            label += f" | {card["card_number"][-4:]}****"
+        if card["sheba"]:
+            label += f" | IR{card["sheba"][-4:]}****"
         items_data.append({
             "label": label,
-            "detail_callback": f"card_detail:{card.id}:{cache_key}:{safe_name}"
+            "detail_callback": f"card_detail:{card["id"]}:{cache_key}:{safe_name}"
         })
 
     await callback.message.edit_text(text, reply_markup=card_items_keyboard(items_data, cache_key))
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data == "card_search_inline")
 async def card_search_inline_callback(callback: CallbackQuery, state: FSMContext):
@@ -7479,18 +6798,16 @@ async def card_search_inline_callback(callback: CallbackQuery, state: FSMContext
     await callback.message.answer(CARD_SEARCH, reply_markup=cancel_menu())
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data == "card_reports")
 async def card_reports_callback(callback: CallbackQuery):
     """Show card summary report."""
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        cards = CardInfoRepository.get_by_user(session, user.id)
+        cards = CardInfoRepository.get_by_user(user["id"])
 
         total = len(cards)
         with_card = sum(1 for c in cards if c.card_number)
@@ -7515,9 +6832,6 @@ async def card_reports_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_reports_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 # ==============================
 # Card Sort & Filter Handlers
@@ -7533,7 +6847,6 @@ async def card_sort_menu_callback(callback: CallbackQuery):
     )
     await safe_callback_answer(callback)
 
-
 @router.callback_query(F.data.startswith("card_filter_menu:"))
 async def card_filter_menu_callback(callback: CallbackQuery):
     """Show filter options for card list."""
@@ -7543,7 +6856,6 @@ async def card_filter_menu_callback(callback: CallbackQuery):
         reply_markup=card_filter_keyboard(cache_key)
     )
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("card_sort:"))
 async def card_sort_callback(callback: CallbackQuery):
@@ -7555,14 +6867,13 @@ async def card_sort_callback(callback: CallbackQuery):
     cache_key = parts[1]
     sort_by = parts[2]
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        cards = CardInfoRepository.get_by_user(session, user.id)
+        cards = CardInfoRepository.get_by_user(user["id"])
         if not cards:
             await callback.message.edit_text(CARD_EMPTY, reply_markup=card_submenu())
             await safe_callback_answer(callback)
@@ -7571,7 +6882,7 @@ async def card_sort_callback(callback: CallbackQuery):
         groups = _group_cards_by_owner_filtered(cards, sort_by=sort_by)
 
         # Generate new cache key and store groups
-        new_cache_key = f"c{user.id}_{int(time.time())}"
+        new_cache_key = f"c{user["id"]}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[new_cache_key] = {g["name"]: g for g in groups}
             _evict_cache(_card_groups_cache)
@@ -7593,9 +6904,6 @@ async def card_sort_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_sort_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("card_filter:"))
 async def card_filter_callback(callback: CallbackQuery):
@@ -7607,14 +6915,13 @@ async def card_filter_callback(callback: CallbackQuery):
     cache_key = parts[1]
     filter_by = parts[2]
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        cards = CardInfoRepository.get_by_user(session, user.id)
+        cards = CardInfoRepository.get_by_user(user["id"])
         if not cards:
             await callback.message.edit_text(CARD_EMPTY, reply_markup=card_submenu())
             await safe_callback_answer(callback)
@@ -7623,7 +6930,7 @@ async def card_filter_callback(callback: CallbackQuery):
         groups = _group_cards_by_owner_filtered(cards, filter_by=filter_by)
 
         # Generate new cache key and store groups
-        new_cache_key = f"c{user.id}_{int(time.time())}"
+        new_cache_key = f"c{user["id"]}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[new_cache_key] = {g["name"]: g for g in groups}
             _evict_cache(_card_groups_cache)
@@ -7653,9 +6960,6 @@ async def card_filter_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_filter_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 # ==============================
 # Card Linked Transaction Handlers
@@ -7673,20 +6977,19 @@ async def card_linked_debt_callback(callback: CallbackQuery):
     cache_key = parts[2] if len(parts) > 2 else None
     safe_name = parts[3] if len(parts) > 3 else None
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد.", show_alert=True)
             return
 
-        txns = _get_linked_transactions(session, user.id, card.card_number, card.sheba, "debt")
-        text = _build_linked_txn_text(txns, "debt", card.name)
+        txns = _get_linked_transactions(user["id"], card["card_number"], card["sheba"], "debt")
+        text = _build_linked_txn_text(txns, "debt", card["name"])
 
         keyboard = card_linked_txn_keyboard(card_id, "debt", cache_key, safe_name)
         await callback.message.edit_text(text, reply_markup=keyboard)
@@ -7694,9 +6997,6 @@ async def card_linked_debt_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_linked_debt_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("card_linked_recv:"))
 async def card_linked_recv_callback(callback: CallbackQuery):
@@ -7710,20 +7010,19 @@ async def card_linked_recv_callback(callback: CallbackQuery):
     cache_key = parts[2] if len(parts) > 2 else None
     safe_name = parts[3] if len(parts) > 3 else None
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد.", show_alert=True)
             return
 
-        txns = _get_linked_transactions(session, user.id, card.card_number, card.sheba, "receivable")
-        text = _build_linked_txn_text(txns, "receivable", card.name)
+        txns = _get_linked_transactions(user["id"], card["card_number"], card["sheba"], "receivable")
+        text = _build_linked_txn_text(txns, "receivable", card["name"])
 
         keyboard = card_linked_txn_keyboard(card_id, "receivable", cache_key, safe_name)
         await callback.message.edit_text(text, reply_markup=keyboard)
@@ -7731,9 +7030,6 @@ async def card_linked_recv_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_linked_recv_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("card_linked_pay:"))
 async def card_linked_pay_callback(callback: CallbackQuery):
@@ -7747,44 +7043,41 @@ async def card_linked_pay_callback(callback: CallbackQuery):
     cache_key = parts[2] if len(parts) > 2 else None
     safe_name = parts[3] if len(parts) > 3 else None
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد.", show_alert=True)
             return
 
         # Get transactions with this card
-        txns = _get_linked_transactions(session, user.id, card.card_number, card.sheba)
-        txn_ids = [t.id for t in txns]
+        txns = _get_linked_transactions(user["id"], card["card_number"], card["sheba"])
+        txn_ids = [t["id"] for t in txns]
 
         if not txn_ids:
-            text = f"📭 هیچ پرداخت مرتبطی با کارت {card.name} یافت نشد."
+            text = f"📭 هیچ پرداخت مرتبطی با کارت {card['name']} یافت نشد."
         else:
-            payments = session.query(Payment).filter(
-                Payment.user_id == user.id,
-                Payment.transaction_id.in_(txn_ids)
-            ).order_by(Payment.id.desc()).limit(10).all()
+            payments = PaymentRepository.get_by_user(user["id"], limit=50)
+            payments = [p for p in payments if p["transaction_id"] in txn_ids][:10]
 
             if not payments:
-                text = f"📭 هیچ پرداخت مرتبطی با کارت {card.name} یافت نشد."
+                text = f"📭 هیچ پرداخت مرتبطی با کارت {card['name']} یافت نشد."
             else:
-                total_paid = sum(p.amount for p in payments)
-                text = f"💳 پرداخت‌های مرتبط با کارت {card.name}\n\n"
+                total_paid = sum(p["amount"] for p in payments)
+                text = f"💳 پرداخت‌های مرتبط با کارت {card['name']}\n\n"
                 text += f"📊 تعداد: {len(payments)} مورد | 💰 مجموع: {format_amount(total_paid)} تومان\n"
                 text += "——————————"
 
                 for p in payments[:10]:
-                    text += f"\n\n💳 #{p.id}"
-                    text += f"\n   💰 مبلغ: {format_amount(p.amount)} تومان"
-                    text += f"\n   📅 {p.jalali_date}"
-                    if p.description:
-                        text += f"\n   📝 {p.description[:30]}"
+                    text += f"\n\n💳 #{p['id']}"
+                    text += f"\n   💰 مبلغ: {format_amount(p['amount'])} تومان"
+                    text += f"\n   📅 {p['jalali_date']}"
+                    if p["description"]:
+                        text += f"\n   📝 {p['description'][:30]}"
 
         keyboard = card_linked_txn_keyboard(card_id, "payment", cache_key, safe_name)
         await callback.message.edit_text(text, reply_markup=keyboard)
@@ -7792,9 +7085,6 @@ async def card_linked_pay_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_linked_pay_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("card_back_from_linked:"))
 async def card_back_from_linked_callback(callback: CallbackQuery):
@@ -7808,24 +7098,23 @@ async def card_back_from_linked_callback(callback: CallbackQuery):
     cache_key = parts[2] if len(parts) > 2 else None
     safe_name = parts[3] if len(parts) > 3 else None
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد.", show_alert=True)
             return
 
         # Get linked transaction counts
-        linked_counts = _get_card_linked_counts(session, user.id, card.card_number, card.sheba)
+        linked_counts = _get_card_linked_counts(user["id"], card["card_number"], card["sheba"])
 
         text = _build_card_detail_text(card)
         keyboard = card_detail_keyboard(
-            card.id, cache_key, safe_name,
+            card["id"], cache_key, safe_name,
             debt_count=linked_counts["debt"],
             recv_count=linked_counts["recv"],
             payment_count=linked_counts["payment"]
@@ -7836,16 +7125,12 @@ async def card_back_from_linked_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card_back_from_linked_callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
-
 
 @router.message(F.text == "➕ ثبت جدید")
 async def card_add_start(message: Message, state: FSMContext):
     """Start adding new card info."""
     await state.set_state(CardForm.name_choice)
     await message.answer(CARD_NAME_CHOICE, reply_markup=card_name_choice_keyboard())
-
 
 @router.message(CardForm.name_choice)
 async def card_name_choice_handler(message: Message, state: FSMContext):
@@ -7865,18 +7150,13 @@ async def card_name_choice_handler(message: Message, state: FSMContext):
     elif message.text == "👥 انتخاب از مشتریان":
         await state.set_state(CardForm.name_customer_select)
         # Get customer list
-        session = get_session()
-        try:
-            user = get_user(session, message)
-            customers = CustomerRepository.get_by_user(session, user.id)
-        finally:
-            session.close()
+        user = get_user(message)
+        customers = CustomerRepository.get_by_user(user["id"])
         if customers:
             await message.answer(CARD_SELECT_CUSTOMER, reply_markup=party_keyboard(customers))
         else:
             await state.set_state(CardForm.name_manual)
             await message.answer("📭 هیچ مشتری یافت نشد. لطفاً نام را به صورت دستی وارد کنید:", reply_markup=cancel_back_menu())
-
 
 @router.message(CardForm.name_manual)
 async def card_name_manual_handler(message: Message, state: FSMContext):
@@ -7898,7 +7178,6 @@ async def card_name_manual_handler(message: Message, state: FSMContext):
     await state.set_state(CardForm.card_number)
     await message.answer(CARD_ENTER_CARD, reply_markup=card_skip_menu())
 
-
 @router.message(CardForm.name_customer_select)
 async def card_name_customer_handler(message: Message, state: FSMContext):
     """Handle customer selection for name."""
@@ -7912,28 +7191,23 @@ async def card_name_customer_handler(message: Message, state: FSMContext):
         return
     
     # Find selected customer
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        customers = CustomerRepository.get_by_user(session, user.id)
-        selected_customer = None
-        for customer in customers:
-            if customer.full_name == message.text:
-                selected_customer = customer
-                break
+    user = get_user(message)
+    customers = CustomerRepository.get_by_user(user["id"])
+    selected_customer = None
+    for customer in customers:
+        if customer["full_name"] == message.text:
+            selected_customer = customer
+            break
         
-        if selected_customer:
-            await state.update_data(name=selected_customer.full_name, customer_id=selected_customer.id)
-            await state.set_state(CardForm.card_number)
-            await message.answer(CARD_ENTER_CARD, reply_markup=card_skip_menu())
-        else:
-            # Re-fetch customers for the keyboard (still within session)
-            await message.answer("⚠️ مشتری انتخاب شده نامعتبر است.")
-            await state.set_state(CardForm.name_customer_select)
-            await message.answer(CARD_SELECT_CUSTOMER, reply_markup=party_keyboard(customers))
-    finally:
-        session.close()
-
+    if selected_customer:
+        await state.update_data(name=selected_customer["full_name"], customer_id=selected_customer["id"])
+        await state.set_state(CardForm.card_number)
+        await message.answer(CARD_ENTER_CARD, reply_markup=card_skip_menu())
+    else:
+        # Re-fetch customers for the keyboard (still within session)
+        await message.answer("⚠️ مشتری انتخاب شده نامعتبر است.")
+        await state.set_state(CardForm.name_customer_select)
+        await message.answer(CARD_SELECT_CUSTOMER, reply_markup=party_keyboard(customers))
 
 @router.message(CardForm.card_number)
 async def card_number_handler(message: Message, state: FSMContext):
@@ -7963,7 +7237,6 @@ async def card_number_handler(message: Message, state: FSMContext):
     await state.set_state(CardForm.sheba)
     await message.answer(CARD_ENTER_SHEBA, reply_markup=card_skip_menu())
 
-
 @router.message(CardForm.sheba)
 async def sheba_handler(message: Message, state: FSMContext):
     """Handle sheba input and move to bank name."""
@@ -7987,16 +7260,11 @@ async def sheba_handler(message: Message, state: FSMContext):
         await state.update_data(sheba=sheba_digits)
     
     # Move to bank name
-    session = get_session()
-    try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
-    finally:
-        session.close()
+    user = get_user(message)
+    cards = CardInfoRepository.get_by_user(user["id"])
+    bank_names = list({c.bank_name for c in cards if c.bank_name})
     await state.set_state(CardForm.bank_name)
     await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
-
 
 @router.message(CardForm.bank_name)
 async def card_bank_name_handler(message: Message, state: FSMContext):
@@ -8027,7 +7295,6 @@ async def card_bank_name_handler(message: Message, state: FSMContext):
     await state.set_state(CardForm.confirm)
     await _show_card_confirm(message, state)
 
-
 async def _show_card_confirm(message: Message, state: FSMContext):
     """Show confirmation before saving card info."""
     data = await state.get_data()
@@ -8047,7 +7314,6 @@ async def _show_card_confirm(message: Message, state: FSMContext):
     
     await message.answer(text, reply_markup=confirm_keyboard(), parse_mode="HTML")
 
-
 @router.callback_query(CardForm.confirm)
 async def card_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle card confirmation and save."""
@@ -8062,16 +7328,15 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
             await safe_callback_answer(callback)
             return
         
-        session = get_session()
         try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
             if not user:
                 await callback.message.edit_text(ACCESS_DENIED, reply_markup=None)
                 await safe_callback_answer(callback)
                 return
             
             # Check for duplicates
-            existing_cards = CardInfoRepository.get_by_user(session, user.id)
+            existing_cards = CardInfoRepository.get_by_user(user["id"])
             card_number = data.get("card_number")
             sheba = data.get("sheba")
             
@@ -8079,13 +7344,13 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
             duplicate_info = ""
             
             for card in existing_cards:
-                if card_number and card.card_number == card_number:
+                if card_number and card["card_number"] == card_number:
                     duplicate_found = True
-                    duplicate_info = f"شماره کارت {card_number} قبلاً برای '{card.name}' ثبت شده است."
+                    duplicate_info = f"شماره کارت {card_number} قبلاً برای '{card["name"]}' ثبت شده است."
                     break
-                if sheba and card.sheba == sheba:
+                if sheba and card["sheba"] == sheba:
                     duplicate_found = True
-                    duplicate_info = f"شماره شبا IR{sheba} قبلاً برای '{card.name}' ثبت شده است."
+                    duplicate_info = f"شماره شبا IR{sheba} قبلاً برای '{card["name"]}' ثبت شده است."
                     break
             
             if duplicate_found:
@@ -8097,8 +7362,7 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
             
             # Save card info
             CardInfoRepository.create(
-                session,
-                user_id=user.id,
+                user_id=user["id"],
                 name=data["name"],
                 card_number=card_number,
                 sheba=sheba,
@@ -8109,12 +7373,10 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
             await state.clear()
             await callback.message.edit_text(CARD_SAVED, reply_markup=None)
             await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
-            logger.info(f"Card info saved: {data['name']} by user {user.telegram_id}")
+            logger.info(f"Card info saved: {data['name']} by user {user["telegram_id"]}")
         except Exception as e:
             logger.error(f"Error saving card info: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
@@ -8122,14 +7384,12 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
     
     await safe_callback_answer(callback)
 
-
 @router.message(F.text == "📋 لیست شماره کارت‌ها")
 async def card_list(message: Message):
     """Show list of card info grouped by owner (hierarchical view)."""
-    session = get_session()
     try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.get_by_user(session, user.id)
+        user = get_user(message)
+        cards = CardInfoRepository.get_by_user(user["id"])
         
         if not cards:
             await message.answer(CARD_EMPTY, reply_markup=card_submenu())
@@ -8138,7 +7398,7 @@ async def card_list(message: Message):
         groups = _group_cards_by_owner(cards)
         
         # Generate cache key and store groups
-        cache_key = f"c{user.id}_{int(time.time())}"
+        cache_key = f"c{user["id"]}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[cache_key] = {g["name"]: g for g in groups}
             _evict_cache(_card_groups_cache)
@@ -8160,16 +7420,12 @@ async def card_list(message: Message):
     except Exception as e:
         logger.error(f"Error listing cards: {e}")
         await message.answer(ERROR_GENERAL, reply_markup=card_submenu())
-    finally:
-        session.close()
-
 
 @router.message(F.text == "🔍 جستجوی کارت")
 async def card_search_start(message: Message, state: FSMContext):
     """Start card search."""
     await state.set_state(CardSearchForm.query)
     await message.answer(CARD_SEARCH, reply_markup=cancel_menu())
-
 
 @router.message(CardSearchForm.query)
 async def card_search_result(message: Message, state: FSMContext):
@@ -8180,10 +7436,9 @@ async def card_search_result(message: Message, state: FSMContext):
         return
     
     query = message.text
-    session = get_session()
     try:
-        user = get_user(session, message)
-        cards = CardInfoRepository.search(session, user.id, query)
+        user = get_user(message)
+        cards = CardInfoRepository.search( user["id"], query)
         
         if not cards:
             await message.answer(CARD_NOT_FOUND, reply_markup=card_submenu())
@@ -8193,7 +7448,7 @@ async def card_search_result(message: Message, state: FSMContext):
         groups = _group_cards_by_owner(cards)
         
         # Generate cache key and store groups
-        cache_key = f"c{user.id}_{int(time.time())}"
+        cache_key = f"c{user["id"]}_{int(time.time())}"
         async with _card_groups_lock:
             _card_groups_cache[cache_key] = {g["name"]: g for g in groups}
             _evict_cache(_card_groups_cache)
@@ -8216,9 +7471,6 @@ async def card_search_result(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error searching cards: {e}")
         await message.answer(ERROR_GENERAL, reply_markup=card_submenu())
-    finally:
-        session.close()
-
 
 @router.callback_query(F.data.startswith("card_edit:"))
 async def card_edit_callback(callback: CallbackQuery, state: FSMContext):
@@ -8227,44 +7479,40 @@ async def card_edit_callback(callback: CallbackQuery, state: FSMContext):
     if card_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
         
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد یا دسترسی ندارید.", show_alert=True)
             return
         
-        await state.update_data(edit_id=card.id)
+        await state.update_data(edit_id=card["id"])
         await state.set_state(CardEditForm.field)
         
         # Show current values
-        card_display = card.card_number or "—"
-        sheba_display = f"IR{card.sheba}" if card.sheba else "—"
-        bank_display = normalize_bank_name(card.bank_name) or "—"
+        card_display = card["card_number"] or "—"
+        sheba_display = f"IR{card["sheba"]}" if card["sheba"] else "—"
+        bank_display = normalize_bank_name(card["bank_name"]) or "—"
         
-        text = f"""✏️ ویرایش شماره کارت و شبا (شناسه: {card.id})
+        text = f"""✏️ ویرایش شماره کارت و شبا (شناسه: {card["id"]})
 
-💳 نام: {card.name}
+💳 نام: {card["name"]}
 💳 شماره کارت: <code>{card_display}</code>
 🏦 شماره شبا: <code>{sheba_display}</code>
 🏛 نام بانک: {bank_display}
 
 فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:"""
         
-        await callback.message.edit_text(text, reply_markup=card_edit_field_keyboard(card.id), parse_mode="HTML")
+        await callback.message.edit_text(text, reply_markup=card_edit_field_keyboard(card["id"]), parse_mode="HTML")
     except Exception as e:
         logger.error(f"Error in card edit callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
     
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("card_edit_field:"))
 async def card_edit_field_selected(callback: CallbackQuery, state: FSMContext):
@@ -8306,7 +7554,6 @@ async def card_edit_field_selected(callback: CallbackQuery, state: FSMContext):
     
     await safe_callback_answer(callback)
 
-
 @router.message(CardEditForm.value)
 async def card_edit_value_handler(message: Message, state: FSMContext):
     """Handle value input for card edit."""
@@ -8324,17 +7571,13 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
     edit_id = data.get("edit_id")
     
     # Load original card values for "-" (no change) handling
-    session = get_session()
-    try:
-        original_card = CardInfoRepository.get_by_id(session, edit_id)
-    finally:
-        session.close()
+    original_card = CardInfoRepository.get_by_id( edit_id)
     
     if field == "name":
         if message.text == "-":
             # No change: restore original value
             if original_card:
-                await state.update_data(name=original_card.name)
+                await state.update_data(name=original_card["name"])
         else:
             if not message.text or len(message.text.strip()) == 0:
                 await message.answer(CARD_NAME_REQUIRED)
@@ -8344,7 +7587,7 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
         if message.text == "-":
             # No change: restore original value
             if original_card:
-                await state.update_data(card_number=original_card.card_number)
+                await state.update_data(card_number=original_card["card_number"])
         else:
             # Validate card number (16 digits), strip spaces and dashes
             card_number = message.text.replace(" ", "").replace("-", "")
@@ -8356,7 +7599,7 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
         if message.text == "-":
             # No change: restore original value
             if original_card:
-                await state.update_data(sheba=original_card.sheba)
+                await state.update_data(sheba=original_card["sheba"])
         else:
             # Validate sheba: user enters only 24 digits (without "IR" prefix)
             sheba_digits = ''.join(filter(str.isdigit, message.text))
@@ -8369,7 +7612,7 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
         if message.text == "-":
             # No change: restore original value
             if original_card:
-                await state.update_data(bank_name=original_card.bank_name)
+                await state.update_data(bank_name=original_card["bank_name"])
         else:
             await state.update_data(bank_name=normalize_bank_name(message.text))
     
@@ -8380,22 +7623,20 @@ async def card_edit_value_handler(message: Message, state: FSMContext):
     )
     await state.set_state(CardEditForm.field)
 
-
 async def _show_card_edit_confirm(callback: CallbackQuery, state: FSMContext):
     """Show confirmation before saving card edit."""
     data = await state.get_data()
-    session = get_session()
     try:
-        card = CardInfoRepository.get_by_id(session, data["edit_id"])
+        card = CardInfoRepository.get_by_id( data["edit_id"])
         if not card:
             await callback.message.edit_text("⚠️ کارت یافت نشد.", reply_markup=None)
             return
         
         # Get new values or keep old ones
-        name = data.get("name", card.name)
-        card_number = data.get("card_number", card.card_number)
-        sheba = data.get("sheba", card.sheba)
-        bank_name = data.get("bank_name", card.bank_name)
+        name = data.get("name", card["name"])
+        card_number = data.get("card_number", card["card_number"])
+        sheba = data.get("sheba", card["sheba"])
+        bank_name = data.get("bank_name", card["bank_name"])
         
         card_display = card_number or "—"
         sheba_display = f"IR{sheba}" if sheba else "—"
@@ -8414,38 +7655,34 @@ async def _show_card_edit_confirm(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Error showing card edit confirm: {e}")
         await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-    finally:
-        session.close()
-
 
 @router.callback_query(CardEditForm.confirm)
 async def card_edit_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle card edit confirmation."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
             if not user:
                 await callback.message.edit_text(ACCESS_DENIED, reply_markup=None)
                 await safe_callback_answer(callback)
                 return
             
             card_id = data.get("edit_id")
-            card = CardInfoRepository.get_by_id(session, card_id)
-            if not card or card.user_id != user.id:
+            card = CardInfoRepository.get_by_id( card_id)
+            if not card or card["user_id"] != user["id"]:
                 await callback.message.edit_text("⚠️ کارت یافت نشد یا دسترسی ندارید.", reply_markup=None)
                 await safe_callback_answer(callback)
                 return
             
             # Check for duplicates (excluding current card)
-            existing_cards = CardInfoRepository.get_by_user(session, user.id)
+            existing_cards = CardInfoRepository.get_by_user(user["id"])
             card_number = data.get("card_number")
             sheba = data.get("sheba")
             
             # Validate that at least one of card_number or sheba is provided after edit
-            final_card_number = card_number if card_number is not None else card.card_number
-            final_sheba = sheba if sheba is not None else card.sheba
+            final_card_number = card_number if card_number is not None else card["card_number"]
+            final_sheba = sheba if sheba is not None else card["sheba"]
             if not final_card_number and not final_sheba:
                 await callback.message.edit_text(CARD_VALID_ERROR_EMPTY, reply_markup=None)
                 await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
@@ -8457,16 +7694,16 @@ async def card_edit_confirm(callback: CallbackQuery, state: FSMContext):
             duplicate_info = ""
             
             for existing_card in existing_cards:
-                if existing_card.id == card_id:
+                if existing_card["id"] == card_id:
                     continue  # Skip current card
                 
-                if card_number and existing_card.card_number == card_number:
+                if card_number and existing_card["card_number"] == card_number:
                     duplicate_found = True
-                    duplicate_info = f"شماره کارت {card_number} قبلاً برای '{existing_card.name}' ثبت شده است."
+                    duplicate_info = f"شماره کارت {card_number} قبلاً برای '{existing_card["name"]}' ثبت شده است."
                     break
-                if sheba and existing_card.sheba == sheba:
+                if sheba and existing_card["sheba"] == sheba:
                     duplicate_found = True
-                    duplicate_info = f"شماره شبا IR{sheba} قبلاً برای '{existing_card.name}' ثبت شده است."
+                    duplicate_info = f"شماره شبا IR{sheba} قبلاً برای '{existing_card["name"]}' ثبت شده است."
                     break
             
             if duplicate_found:
@@ -8478,7 +7715,6 @@ async def card_edit_confirm(callback: CallbackQuery, state: FSMContext):
             
             # Update card info
             CardInfoRepository.update(
-                session,
                 card_id,
                 name=data.get("name"),
                 card_number=data.get("card_number"),
@@ -8489,19 +7725,16 @@ async def card_edit_confirm(callback: CallbackQuery, state: FSMContext):
             await state.clear()
             await callback.message.edit_text(CARD_UPDATED, reply_markup=None)
             await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
-            logger.info(f"Card info updated: ID {card_id} by user {user.telegram_id}")
+            logger.info(f"Card info updated: ID {card_id} by user {user["telegram_id"]}")
         except Exception as e:
             logger.error(f"Error updating card info: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
         await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
     
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("card_delete:"))
 async def card_delete_callback(callback: CallbackQuery, state: FSMContext):
@@ -8510,27 +7743,26 @@ async def card_delete_callback(callback: CallbackQuery, state: FSMContext):
     if card_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
         
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد یا دسترسی ندارید.", show_alert=True)
             return
         
-        await state.update_data(delete_id=card.id)
+        await state.update_data(delete_id=card["id"])
         
         # Show confirmation
-        card_display = card.card_number or "—"
-        sheba_display = f"IR{card.sheba}" if card.sheba else "—"
+        card_display = card["card_number"] or "—"
+        sheba_display = f"IR{card["sheba"]}" if card["sheba"] else "—"
         
         text = f"""⚠️ آیا از حذف این مورد اطمینان دارید؟
 
-💳 نام: {card.name}
+💳 نام: {card["name"]}
 💳 شماره کارت: <code>{card_display}</code>
 🏦 شماره شبا: <code>{sheba_display}</code>"""
         
@@ -8539,51 +7771,44 @@ async def card_delete_callback(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logger.error(f"Error in card delete callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در بارگذاری اطلاعات.", show_alert=True)
-    finally:
-        session.close()
     
     await safe_callback_answer(callback)
-
 
 @router.callback_query(CardDeleteForm.confirm)
 async def card_delete_confirm(callback: CallbackQuery, state: FSMContext):
     """Handle card delete confirmation."""
     if callback.data == "confirm_yes":
         data = await state.get_data()
-        session = get_session()
         try:
-            user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
             if not user:
                 await callback.message.edit_text(ACCESS_DENIED, reply_markup=None)
                 await safe_callback_answer(callback)
                 return
             
             card_id = data.get("delete_id")
-            card = CardInfoRepository.get_by_id(session, card_id)
-            if not card or card.user_id != user.id:
+            card = CardInfoRepository.get_by_id( card_id)
+            if not card or card["user_id"] != user["id"]:
                 await callback.message.edit_text("⚠️ کارت یافت نشد یا دسترسی ندارید.", reply_markup=None)
                 await safe_callback_answer(callback)
                 return
             
             # Delete card
-            CardInfoRepository.delete(session, card_id)
+            CardInfoRepository.delete( card_id)
             
             await state.clear()
             await callback.message.edit_text(CARD_DELETED, reply_markup=None)
             await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
-            logger.info(f"Card info deleted: ID {card_id} by user {user.telegram_id}")
+            logger.info(f"Card info deleted: ID {card_id} by user {user["telegram_id"]}")
         except Exception as e:
             logger.error(f"Error deleting card info: {e}")
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
-        finally:
-            session.close()
     else:
         await state.clear()
         await callback.message.edit_text(CANCELED, reply_markup=None)
         await callback.message.answer(CARD_MENU, reply_markup=card_submenu())
     
     await safe_callback_answer(callback)
-
 
 @router.callback_query(F.data.startswith("copy_card:"))
 @router.callback_query(F.data.startswith("copy_sheba:"))
@@ -8597,48 +7822,47 @@ async def card_copy_callback(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
     
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
         
-        card = CardInfoRepository.get_by_id(session, card_id)
-        if not card or card.user_id != user.id:
+        card = CardInfoRepository.get_by_id( card_id)
+        if not card or card["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ کارت یافت نشد یا دسترسی ندارید.", show_alert=True)
             return
         
         if action == "copy_card":
             # Copy only card number
-            text_to_copy = card.card_number or ""
+            text_to_copy = card["card_number"] or ""
             if not text_to_copy:
                 await safe_callback_answer(callback, "⚠️ شماره کارت موجود نیست.", show_alert=True)
                 return
             label = "💳 شماره کارت"
         elif action == "copy_sheba":
             # Copy only IBAN (with IR prefix)
-            text_to_copy = f"IR{card.sheba}" if card.sheba else ""
+            text_to_copy = f"IR{card["sheba"]}" if card["sheba"] else ""
             if not text_to_copy:
                 await safe_callback_answer(callback, "⚠️ شماره شبا موجود نیست.", show_alert=True)
                 return
             label = "🏦 شماره شبا"
         else:  # copy_sms
             # SMS format: Name + Card Number (formatted with dashes) + IBAN (without IR)
-            if not card.card_number and not card.sheba:
+            if not card["card_number"] and not card["sheba"]:
                 await safe_callback_answer(callback, "⚠️ هیچ اطلاعاتی برای ارسال وجود ندارد.", show_alert=True)
                 return
             
             # Format card number: XXXX-XXXX-XXXX-XXXX
             card_formatted = ""
-            if card.card_number:
-                parts_list = [card.card_number[i:i+4] for i in range(0, len(card.card_number), 4)]
+            if card["card_number"]:
+                parts_list = [card["card_number"][i:i+4] for i in range(0, len(card["card_number"]), 4)]
                 card_formatted = "-".join(parts_list)
             
             # IBAN digits without IR prefix
-            sheba_digits = card.sheba if card.sheba else ""
+            sheba_digits = card["sheba"] if card["sheba"] else ""
             
-            lines = [card.name]
+            lines = [card["name"]]
             if card_formatted:
                 lines.append("")
                 lines.append("شماره کارت:")
@@ -8661,9 +7885,6 @@ async def card_copy_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in card copy callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در کپی.", show_alert=True)
-    finally:
-        session.close()
-
 
 # ==============================
 # Debt/Receivable SMS Copy Handler
@@ -8680,46 +7901,45 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    session = get_session()
     try:
-        user = UserRepository.get_by_telegram_id(session, callback.from_user.id)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, "⚠️ کاربر یافت نشد.", show_alert=True)
             return
 
-        txn = TransactionRepository.get_by_id(session, txn_id)
-        if not txn or txn.user_id != user.id:
+        txn = TransactionRepository.get_by_id( txn_id)
+        if not txn or txn["user_id"] != user["id"]:
             await safe_callback_answer(callback, "⚠️ مورد یافت نشد یا دسترسی ندارید.", show_alert=True)
             return
 
-        if not txn.card_number and not txn.sheba and not txn.bank_name:
+        if not txn["card_number"] and not txn["sheba"] and not txn["bank_name"]:
             await safe_callback_answer(callback, "⚠️ اطلاعات پرداختی موجود نیست.", show_alert=True)
             return
 
         type_label = "بدهی" if action == "debt_sms" else "طلب"
-        party = txn.party_name or "-"
-        amount_fmt = format_amount(txn.amount)
-        amount_words = amount_to_persian_words(txn.amount)
+        party = txn["party_name"] or "-"
+        amount_fmt = format_amount(txn["amount"])
+        amount_words = amount_to_persian_words(txn["amount"])
 
         lines = []
 
         # Card number (first)
-        if txn.card_number:
-            card_fmt = " ".join([txn.card_number[i:i+4] for i in range(0, 16, 4)])
+        if txn["card_number"]:
+            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
             lines.append("کارت:")
             lines.append(card_fmt)
             lines.append("")
 
         # IBAN (second)
-        if txn.sheba:
+        if txn["sheba"]:
             lines.append("شبا:")
-            lines.append(txn.sheba)
+            lines.append(txn["sheba"])
             lines.append("")
 
         # Name, Bank, Amount
         lines.append(party)
-        if txn.bank_name:
-            lines.append(f"بانک: {normalize_bank_name(txn.bank_name)}")
+        if txn["bank_name"]:
+            lines.append(f"بانک: {normalize_bank_name(txn["bank_name"])}")
         lines.append(f"{amount_fmt} تومان")
         lines.append(amount_words)
 
@@ -8733,9 +7953,6 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in txn sms copy callback: {e}")
         await safe_callback_answer(callback, "⚠️ خطا در کپی.", show_alert=True)
-    finally:
-        session.close()
-
 
 # ==============================
 # Fallback Handler
@@ -8746,7 +7963,6 @@ async def callback_fallback_handler(callback: CallbackQuery):
     """Handle unhandled callback queries to prevent timeout."""
     logger.warning(f"Unhandled callback query: {callback.data} from user {callback.from_user.id}")
     await safe_callback_answer(callback, "⚠️ عملیات نامعتبر است.", show_alert=True)
-
 
 @router.message()
 async def fallback_handler(message: Message):

@@ -1,254 +1,323 @@
-"""Database models for the accounting bot."""
+"""MongoDB database connection and document schemas for the accounting bot."""
 
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Generator
-from sqlalchemy import create_engine, Column, Integer, BigInteger, Float, String, Text, DateTime, ForeignKey, Boolean
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+from dataclasses import dataclass, field, asdict
+from typing import Optional, List, Dict, Any
+
+from pymongo import MongoClient
+from pymongo.database import Database
+from pymongo.collection import Collection
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.config import settings
-
-Base = declarative_base()
-
-
-def _utcnow() -> datetime:
-    """Return current UTC time (timezone-aware)."""
-    return datetime.now(timezone.utc)
+from app.utils.logger import logger
 
 
-class User(Base):
-    """Telegram bot users."""
-    __tablename__ = "users"
+# ==============================
+# MongoDB Connection Manager
+# ==============================
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_id = Column(BigInteger, unique=True, nullable=False, index=True)
-    username = Column(String(255), nullable=True)
-    first_name = Column(String(255), nullable=True)
-    last_name = Column(String(255), nullable=True)
-    is_admin = Column(Boolean, default=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-
-    transactions = relationship("Transaction", back_populates="user")
-    customers = relationship("Customer", back_populates="user")
-    card_info = relationship("CardInfo", back_populates="user")
+_client: Optional[MongoClient] = None
+_db: Optional[Database] = None
 
 
-class Transaction(Base):
-    """Financial transactions: income, expense, debt, receivable."""
-    __tablename__ = "transactions"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    
-    # Type: income, expense, debt, receivable
-    transaction_type = Column(String(50), nullable=False, index=True)
-    
-    amount = Column(Float, nullable=False)
-    description = Column(Text, nullable=True)
-    category = Column(String(255), nullable=True)
-    subcategory = Column(String(255), nullable=True)
-    
-    # Person/Company for debts and receivables
-    party_name = Column(String(255), nullable=True)
-    
-    # Customer relation
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
-    
-    # Dates in Jalali format
-    jalali_date = Column(String(20), nullable=False)
-    jalali_time = Column(String(20), nullable=False)
-    jalali_full = Column(String(50), nullable=False)
-    
-    # Due date for debts/receivables
-    due_jalali_date = Column(String(20), nullable=True)
-    due_jalali_time = Column(String(20), nullable=True)
-    
-    # Photo attachment (optional)
-    photo_path = Column(String(500), nullable=True)
-
-    # Card/IBAN info (optional, for debts and receivables)
-    card_number = Column(String(16), nullable=True)
-    sheba = Column(String(26), nullable=True)
-    bank_name = Column(String(255), nullable=True)
-
-    # Internal UTC timestamp
-    created_at = Column(DateTime, default=_utcnow)
-    
-    is_settled = Column(Boolean, default=False)
-    settled_at = Column(DateTime, nullable=True)
-
-    user = relationship("User", back_populates="transactions")
-    customer = relationship("Customer", back_populates="transactions")
+def get_database() -> Database:
+    """Get the MongoDB database instance. Initializes connection if needed."""
+    global _client, _db
+    if _db is None:
+        init_database()
+    return _db
 
 
-class Customer(Base):
-    """Customer management."""
-    __tablename__ = "customers"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    
-    full_name = Column(String(255), nullable=False)
-    phone = Column(String(50), nullable=True)
-    address = Column(Text, nullable=True)
-    notes = Column(Text, nullable=True)
-    
-    # Financial summary - cached for performance
-    total_debt = Column(Float, default=0.0)
-    total_receivable = Column(Float, default=0.0)
-    
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-
-    user = relationship("User", back_populates="customers")
-    transactions = relationship("Transaction", back_populates="customer")
-
-
-class Reminder(Base):
-    """Reminders for debts, receivables, etc."""
-    __tablename__ = "reminders"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=True)
-    
-    reminder_type = Column(String(50), nullable=False)  # debt, receivable, custom
-    title = Column(String(255), nullable=False)
-    message = Column(Text, nullable=True)
-    
-    reminder_jalali_date = Column(String(20), nullable=False)
-    reminder_time = Column(String(20), nullable=True)
-    
-    is_sent = Column(Boolean, default=False)
-    sent_at = Column(DateTime, nullable=True)
-    
-    created_at = Column(DateTime, default=_utcnow)
-
-
-class CardInfo(Base):
-    """Credit card and IBAN (Sheba) records."""
-    __tablename__ = "card_info"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)  # Associated name (manual or from customers)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)  # Optional link to customer
-    card_number = Column(String(16), nullable=True)  # Exactly 16 digits
-    sheba = Column(String(26), nullable=True)  # IR + 24 digits
-    bank_name = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-
-    user = relationship("User", back_populates="card_info")
-    customer = relationship("Customer")
-
-
-class Backup(Base):
-    """Database backup records."""
-    __tablename__ = "backups"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    
-    filename = Column(String(255), nullable=False)
-    file_size = Column(BigInteger, default=0)
-    jalali_date = Column(String(20), nullable=False)
-    jalali_time = Column(String(20), nullable=True)
-    
-    created_at = Column(DateTime, default=_utcnow)
-
-
-class Payment(Base):
-    """Payment history for debts and receivables."""
-    __tablename__ = "payments"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    transaction_id = Column(Integer, ForeignKey("transactions.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    
-    amount = Column(Float, nullable=False)
-    payment_type = Column(String(50), nullable=False)  # debt_payment, receivable_payment
-    description = Column(Text, nullable=True)
-    photo_path = Column(String(500), nullable=True)
-    
-    jalali_date = Column(String(20), nullable=False)
-    jalali_time = Column(String(20), nullable=False)
-    jalali_full = Column(String(50), nullable=False)
-    
-    created_at = Column(DateTime, default=_utcnow)
-
-    transaction = relationship("Transaction", back_populates="payments")
-    user = relationship("User")
-
-
-# Add relationship to Transaction
-Transaction.payments = relationship("Payment", back_populates="transaction", cascade="all, delete-orphan")
-
-
-_engine = None
-_SessionLocal = None
+def get_collection(name: str) -> Collection:
+    """Get a MongoDB collection by name."""
+    return get_database()[name]
 
 
 def init_database():
-    """Initialize the database and create all tables."""
-    global _engine, _SessionLocal
-    
-    import os
-    from sqlalchemy import inspect, text
-    
-    # Ensure data directory exists
-    db_path = settings.DATABASE_URL.replace("sqlite:///", "")
-    db_dir = os.path.dirname(db_path)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-    
-    _engine = create_engine(
-        settings.DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        echo=False
-    )
-    
-    Base.metadata.create_all(_engine)
-    
-    # Auto-migrate: add missing columns to existing tables
-    inspector = inspect(_engine)
-    with _engine.connect() as conn:
-        for table_name, table_obj in Base.metadata.tables.items():
-            if table_name in inspector.get_table_names():
-                existing_cols = {c['name'] for c in inspector.get_columns(table_name)}
-                for column in table_obj.columns:
-                    if column.name not in existing_cols:
-                        col_type = column.type.compile(_engine.dialect)
-                        nullable = "NULL" if column.nullable else "NOT NULL"
-                        default = ""
-                        if column.default is not None:
-                            default_val = column.default.arg if hasattr(column.default, 'arg') else None
-                            if default_val is not None:
-                                default = f" DEFAULT '{default_val}'"
-                        sql = f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type} {nullable}{default}"
-                        conn.execute(text(sql))
-                        conn.commit()
-    
-    _SessionLocal = sessionmaker(bind=_engine)
-    return _engine, _SessionLocal
+    """Initialize MongoDB connection and create indexes."""
+    global _client, _db
+
+    if not settings.MONGO_URI:
+        raise ValueError("MONGO_URI is not configured. Please set it in .env file.")
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            _client = MongoClient(
+                settings.MONGO_URI,
+                serverSelectionTimeoutMS=15000,
+                connectTimeoutMS=15000,
+                socketTimeoutMS=30000,
+                maxPoolSize=50,
+                minPoolSize=2,
+                retryWrites=True,
+                retryReads=True,
+                w='majority',
+                directConnection=False
+            )
+            _db = _client[settings.MONGO_DB_NAME]
+
+            # Verify connection
+            _client.admin.command('ping')
+            logger.info(f"Connected to MongoDB Atlas: {settings.MONGO_DB_NAME}")
+
+            # Create indexes
+            _create_indexes()
+            return  # Success
+
+        except (ConnectionFailure, ServerSelectionTimeoutError) as e:
+            logger.error(f"MongoDB connection attempt {attempt + 1}/{max_retries} failed: {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(3)
+                continue
+            raise
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(3)
+                continue
+            raise
 
 
-@contextmanager
-def get_session() -> Generator[Session, None, None]:
-    """Context manager that provides a database session with automatic cleanup."""
-    global _SessionLocal
-    if _SessionLocal is None:
-        init_database()
-    session = _SessionLocal()
+def _create_indexes():
+    """Create database indexes for optimal query performance."""
     try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+        # Users collection
+        _db.users.create_index("telegram_id", unique=True)
+
+        # Transactions collection
+        _db.transactions.create_index("user_id")
+        _db.transactions.create_index("transaction_type")
+        _db.transactions.create_index([("user_id", 1), ("transaction_type", 1)])
+        _db.transactions.create_index([("user_id", 1), ("is_settled", 1)])
+        _db.transactions.create_index("customer_id")
+
+        # Customers collection
+        _db.customers.create_index("user_id")
+
+        # Card info collection
+        _db.card_info.create_index("user_id")
+
+        # Reminders collection
+        _db.reminders.create_index("user_id")
+        _db.reminders.create_index([("is_sent", 1), ("reminder_jalali_date", 1)])
+
+        # Backups collection
+        _db.backups.create_index("user_id")
+
+        # Payments collection
+        _db.payments.create_index("transaction_id")
+        _db.payments.create_index("user_id")
+
+        # Counters collection (for auto-increment IDs)
+        # _id index is created automatically, no need to create it explicitly
+
+        logger.info("Database indexes created successfully.")
+    except Exception as e:
+        logger.warning(f"Index creation warning: {e}")
+
+
+def close_database():
+    """Close MongoDB connection."""
+    global _client, _db
+    if _client:
+        _client.close()
+        _client = None
+        _db = None
+        logger.info("MongoDB connection closed.")
+
+
+def get_next_sequence(name: str) -> int:
+    """Get the next auto-increment ID for a collection."""
+    counters = _db.counters
+    counter = counters.find_one_and_update(
+        {"_id": name},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True
+    )
+    return counter["seq"]
+
+
+# ==============================
+# Document Schema Helpers
+# ==============================
+
+def _utcnow() -> datetime:
+    """Return current UTC time."""
+    return datetime.now(timezone.utc)
+
+
+def document_to_dict(doc: Optional[Dict]) -> Optional[Dict]:
+    """Convert MongoDB document to dict, removing _id."""
+    if doc is None:
+        return None
+    result = dict(doc)
+    result.pop("_id", None)
+    return result
+
+
+# ==============================
+# Collection Names
+# ==============================
+
+COLLECTIONS = {
+    "users": "users",
+    "transactions": "transactions",
+    "customers": "customers",
+    "reminders": "reminders",
+    "card_info": "card_info",
+    "backups": "backups",
+    "payments": "payments",
+    "counters": "counters",
+}
+
+
+# ==============================
+# Document Factory Functions
+# ==============================
+
+def create_user_doc(telegram_id: int, username: str = None,
+                    first_name: str = None, last_name: str = None,
+                    is_admin: bool = False, is_active: bool = True) -> Dict:
+    """Create a user document."""
+    now = _utcnow()
+    return {
+        "id": get_next_sequence("users"),
+        "telegram_id": telegram_id,
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "is_admin": is_admin,
+        "is_active": is_active,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def create_transaction_doc(user_id: int, transaction_type: str,
+                           amount: float, jalali_date: str, jalali_time: str,
+                           jalali_full: str, description: str = None,
+                           category: str = None, subcategory: str = None,
+                           party_name: str = None, customer_id: int = None,
+                           due_jalali_date: str = None, due_jalali_time: str = None,
+                           photo_path: str = None, card_number: str = None,
+                           sheba: str = None, bank_name: str = None) -> Dict:
+    """Create a transaction document."""
+    return {
+        "id": get_next_sequence("transactions"),
+        "user_id": user_id,
+        "transaction_type": transaction_type,
+        "amount": amount,
+        "description": description,
+        "category": category,
+        "subcategory": subcategory,
+        "party_name": party_name,
+        "customer_id": customer_id,
+        "jalali_date": jalali_date,
+        "jalali_time": jalali_time,
+        "jalali_full": jalali_full,
+        "due_jalali_date": due_jalali_date,
+        "due_jalali_time": due_jalali_time,
+        "photo_path": photo_path,
+        "card_number": card_number,
+        "sheba": sheba,
+        "bank_name": bank_name,
+        "created_at": _utcnow(),
+        "is_settled": False,
+        "settled_at": None,
+    }
+
+
+def create_customer_doc(user_id: int, full_name: str,
+                        phone: str = None, address: str = None,
+                        notes: str = None) -> Dict:
+    """Create a customer document."""
+    now = _utcnow()
+    return {
+        "id": get_next_sequence("customers"),
+        "user_id": user_id,
+        "full_name": full_name,
+        "phone": phone,
+        "address": address,
+        "notes": notes,
+        "total_debt": 0.0,
+        "total_receivable": 0.0,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def create_reminder_doc(user_id: int, reminder_type: str, title: str,
+                        reminder_jalali_date: str, message: str = None,
+                        transaction_id: int = None,
+                        reminder_time: str = None) -> Dict:
+    """Create a reminder document."""
+    return {
+        "id": get_next_sequence("reminders"),
+        "user_id": user_id,
+        "transaction_id": transaction_id,
+        "reminder_type": reminder_type,
+        "title": title,
+        "message": message,
+        "reminder_jalali_date": reminder_jalali_date,
+        "reminder_time": reminder_time,
+        "is_sent": False,
+        "sent_at": None,
+        "created_at": _utcnow(),
+    }
+
+
+def create_card_info_doc(user_id: int, name: str, card_number: str = None,
+                         sheba: str = None, customer_id: int = None,
+                         bank_name: str = None) -> Dict:
+    """Create a card info document."""
+    now = _utcnow()
+    return {
+        "id": get_next_sequence("card_info"),
+        "user_id": user_id,
+        "name": name,
+        "customer_id": customer_id,
+        "card_number": card_number,
+        "sheba": sheba,
+        "bank_name": bank_name,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def create_backup_doc(user_id: int, filename: str, file_size: int,
+                      jalali_date: str, jalali_time: str = None) -> Dict:
+    """Create a backup document."""
+    return {
+        "id": get_next_sequence("backups"),
+        "user_id": user_id,
+        "filename": filename,
+        "file_size": file_size,
+        "jalali_date": jalali_date,
+        "jalali_time": jalali_time,
+        "created_at": _utcnow(),
+    }
+
+
+def create_payment_doc(transaction_id: int, user_id: int, amount: float,
+                       payment_type: str, jalali_date: str, jalali_time: str,
+                       jalali_full: str, description: str = None,
+                       photo_path: str = None) -> Dict:
+    """Create a payment document."""
+    return {
+        "id": get_next_sequence("payments"),
+        "transaction_id": transaction_id,
+        "user_id": user_id,
+        "amount": amount,
+        "payment_type": payment_type,
+        "description": description,
+        "photo_path": photo_path,
+        "jalali_date": jalali_date,
+        "jalali_time": jalali_time,
+        "jalali_full": jalali_full,
+        "created_at": _utcnow(),
+    }

@@ -183,7 +183,7 @@ def party_keyboard(customers: list) -> ReplyKeyboardMarkup:
     """Party name selection from customer list + manual input."""
     builder = ReplyKeyboardBuilder()
     for c in customers:
-        builder.row(KeyboardButton(text=c.full_name))
+        builder.row(KeyboardButton(text=c["full_name"]))
     builder.row(KeyboardButton(text="✏️ وارد دستی"))
     builder.row(KeyboardButton(text="❌ انصراف"), KeyboardButton(text="🔙 بازگشت به منو"))
     return builder.as_markup(resize_keyboard=True)
@@ -391,10 +391,10 @@ def card_info_choice_keyboard(cards: list) -> ReplyKeyboardMarkup:
     """
     builder = ReplyKeyboardBuilder()
     for card in cards[:10]:  # Limit to 10 cards
-        label = card.name
-        if card.card_number:
-            label += f" | {card.card_number[-4:]}****"
-        if card.sheba:
+        label = card["name"]
+        if card["card_number"]:
+            label += f" | {card['card_number'][-4:]}****"
+        if card["sheba"]:
             label += f" | شبا"
         builder.row(KeyboardButton(text=label))
     builder.row(KeyboardButton(text="✏️ ورود دستی کارت/شبا"))
@@ -408,11 +408,11 @@ def card_select_keyboard(cards: list) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     seen_cards = set()
     for card in cards[:10]:
-        if card.card_number and card.card_number not in seen_cards:
-            seen_cards.add(card.card_number)
-            label = f"💳 {card.card_number[-4:]}****"
-            if card.name:
-                label = f"{card.name} | {card.card_number[-4:]}****"
+        if card["card_number"] and card["card_number"] not in seen_cards:
+            seen_cards.add(card["card_number"])
+            label = f"💳 {card['card_number'][-4:]}****"
+            if card["name"]:
+                label = f"{card['name']} | {card['card_number'][-4:]}****"
             builder.row(KeyboardButton(text=label))
     builder.row(KeyboardButton(text="✏️ ورود دستی شماره کارت"))
     builder.row(KeyboardButton(text="⏭️ رد کردن"))
@@ -425,11 +425,11 @@ def sheba_select_keyboard(cards: list) -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     seen_sheba = set()
     for card in cards[:10]:
-        if card.sheba and card.sheba not in seen_sheba:
-            seen_sheba.add(card.sheba)
-            label = f"🏦 IR{card.sheba[-4:]}****"
-            if card.name:
-                label = f"{card.name} | IR{card.sheba[-4:]}****"
+        if card["sheba"] and card["sheba"] not in seen_sheba:
+            seen_sheba.add(card["sheba"])
+            label = f"🏦 IR{card['sheba'][-4:]}****"
+            if card["name"]:
+                label = f"{card['name']} | IR{card['sheba'][-4:]}****"
             builder.row(KeyboardButton(text=label))
     builder.row(KeyboardButton(text="✏️ ورود دستی شماره شبا"))
     builder.row(KeyboardButton(text="⏭️ رد کردن"))
@@ -483,18 +483,18 @@ def customer_select_keyboard(customers: list, action: str = "edit") -> InlineKey
 
     name_counts = {}
     for c in customers:
-        name_counts[c.full_name] = name_counts.get(c.full_name, 0) + 1
+        name_counts[c["full_name"]] = name_counts.get(c["full_name"], 0) + 1
 
     prefix = "edit_customer" if action == "edit" else "delete_customer"
 
     for c in customers:
-        label = c.full_name
-        if name_counts[c.full_name] > 1:
-            if c.phone:
-                label = f"{c.full_name} ({c.phone})"
+        label = c["full_name"]
+        if name_counts[c["full_name"]] > 1:
+            if c["phone"]:
+                label = f"{c['full_name']} ({c['phone']})"
             else:
-                label = f"{c.full_name} (🆔 {c.id})"
-        builder.row(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{c.id}"))
+                label = f"{c['full_name']} (🆔 {c['id']})"
+        builder.row(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{c['id']}"))
 
     builder.row(InlineKeyboardButton(text="❌ انصراف", callback_data=f"{prefix}:cancel"))
     return builder.as_markup()
@@ -752,9 +752,9 @@ def payment_select_keyboard(transactions: list, payments_data: dict) -> InlineKe
     """
     builder = InlineKeyboardBuilder()
     for txn in transactions:
-        remaining = payments_data.get(txn.id, txn.amount)
-        label = f"#{txn.id} {txn.party_name or '-'} | {int(remaining):,} تومان"
-        builder.row(InlineKeyboardButton(text=label, callback_data=f"pay_select:{txn.id}"))
+        remaining = payments_data.get(txn["id"], txn["amount"])
+        label = f"#{txn['id']} {txn['party_name'] or '-'} | {int(remaining):,} تومان"
+        builder.row(InlineKeyboardButton(text=label, callback_data=f"pay_select:{txn['id']}"))
     builder.row(InlineKeyboardButton(text="❌ انصراف", callback_data="pay_select:cancel"))
     return builder.as_markup()
 
