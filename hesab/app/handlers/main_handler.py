@@ -333,24 +333,51 @@ def _build_dashboard_text(user_id: int) -> str:
     else:
         status = DASHBOARD_ZERO
     
-    return f"""📊 وضعیت مالی
+    # Calculate percentages
+    total_inflow = income + receivables
+    total_outflow = expense + debts
+    
+    if total_inflow > 0:
+        income_pct = (income / total_inflow) * 100
+        recv_pct = (receivables / total_inflow) * 100
+    else:
+        income_pct = 0
+        recv_pct = 0
+    
+    if total_outflow > 0:
+        expense_pct = (expense / total_outflow) * 100
+        debt_pct = (debts / total_outflow) * 100
+    else:
+        expense_pct = 0
+        debt_pct = 0
+    
+    # Build progress bars
+    def make_bar(pct, length=10):
+        filled = int(pct / 100 * length)
+        return "█" * filled + "░" * (length - filled)
+    
+    return f"""📊 داشبورد مالی
+━━━━━━━━━━━━━━━━━━
 
-{DASHBOARD_INCOME}:
-{format_amount(income)} تومان
+💰 درآمدها
+├── مجموع: {format_amount(income)} تومان
+└── {make_bar(income_pct)} {income_pct:.1f}%
 
-{DASHBOARD_EXPENSE}:
-{format_amount(expense)} تومان
+💸 هزینه‌ها
+├── مجموع: {format_amount(expense)} تومان
+└── {make_bar(expense_pct)} {expense_pct:.1f}%
 
-{DASHBOARD_RECEIVABLE}:
-{format_amount(receivables)} تومان
+📌 طلب‌ها
+├── مجموع: {format_amount(receivables)} تومان
+└── {make_bar(recv_pct)} {recv_pct:.1f}%
 
-{DASHBOARD_DEBT}:
-{format_amount(debts)} تومان
+📋 بدهی‌ها
+├── مجموع: {format_amount(debts)} تومان
+└── {make_bar(debt_pct)} {debt_pct:.1f}%
 
-{DASHBOARD_BALANCE}:
-{format_amount(balance)} تومان
+━━━━━━━━━━━━━━━━━━
+✅ موجودی نهایی: {format_amount(balance)} تومان
 
-——————————
 {status}"""
 
 # ==============================
@@ -3256,7 +3283,7 @@ async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
 async def debt_reports(callback: CallbackQuery):
     """Show debt summary report."""
     await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
     if not user:
         await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
         return
@@ -3282,6 +3309,10 @@ async def debt_reports(callback: CallbackQuery):
     due_today = [t for t in active if t["due_jalali_date"] == today]
     due_today_count = len(due_today)
 
+    # Calculate additional metrics
+    settlement_rate = (settled_count / total * 100) if total > 0 else 0
+    avg_debt = (total_amount / total) if total > 0 else 0
+
     report = DEBT_REPORT_TITLE.format(
         total=total,
         total_amount=format_amount(total_amount),
@@ -3291,7 +3322,9 @@ async def debt_reports(callback: CallbackQuery):
         settled_amount=format_amount(settled_amount),
         overdue=overdue_count,
         overdue_amount=format_amount(overdue_amount),
-        due_today=due_today_count
+        due_today=due_today_count,
+        settlement_rate=f"{settlement_rate:.1f}",
+        avg_debt=format_amount(avg_debt)
     )
 
     await callback.message.answer(report, reply_markup=debt_submenu())
@@ -4879,7 +4912,7 @@ async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMCon
 async def receivable_reports(callback: CallbackQuery):
     """Show receivable summary report."""
     await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
     if not user:
         await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
         return
@@ -4921,6 +4954,10 @@ async def receivable_reports(callback: CallbackQuery):
         payments = PaymentRepository.get_by_transaction(t["id"])
         total_paid_amount += sum(p["amount"] for p in payments) if payments else 0
 
+    # Calculate additional metrics
+    collection_rate = (settled_count / total * 100) if total > 0 else 0
+    avg_receivable = (total_amount / total) if total > 0 else 0
+
     report = RECEIVABLE_REPORT_TITLE.format(
         total=total,
         total_amount=format_amount(total_amount),
@@ -4930,15 +4967,17 @@ async def receivable_reports(callback: CallbackQuery):
         settled_amount=format_amount(settled_amount),
         overdue=overdue_count,
         overdue_amount=format_amount(overdue_amount),
-        due_today=due_today_count
+        due_today=due_today_count,
+        collection_rate=f"{collection_rate:.1f}",
+        avg_receivable=format_amount(avg_receivable),
+        total_paid=format_amount(total_paid_amount)
     )
 
     # Add partial payment breakdown
     if partially_paid:
         partial_amount = sum(t["amount"] for t in partially_paid)
-        report += f"\n⏳ پرداخت جزئی: {len(partially_paid)} مورد ({format_amount(partial_amount)} تومان)"
+        report += f"\n\n⏳ پرداخت جزئی: {len(partially_paid)} مورد ({format_amount(partial_amount)} تومان)"
         report += f"\n✅ تسویه کامل: {len(fully_settled)} مورد"
-    report += f"\n💰 مجموع دریافتی: {format_amount(total_paid_amount)} تومان"
 
     await callback.message.answer(report, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
@@ -5948,6 +5987,15 @@ async def _send_report(message: Message, period: str):
         
         balance_line = f"{DASHBOARD_BALANCE}: {format_amount(balance)} تومان"
         
+        # Calculate additional metrics
+        txn_count = len(transactions)
+        
+        # Calculate days in period for averages
+        from app.utils.jdatetime_helper import get_days_between
+        days_in_period = max(1, get_days_between(start, end))
+        avg_daily_income = income / days_in_period
+        avg_daily_expense = expense / days_in_period
+        
         period_name = REPORT_PERIODS.get(period, period)
         report_text = REPORT_TITLE.format(
             period=period_name,
@@ -5958,7 +6006,10 @@ async def _send_report(message: Message, period: str):
             debt=format_amount(debts),
             receivable=format_amount(receivables),
             balance_line=balance_line,
-            status=status
+            status=status,
+            txn_count=txn_count,
+            avg_daily_income=format_amount(avg_daily_income),
+            avg_daily_expense=format_amount(avg_daily_expense)
         )
         
         await message.answer(report_text, reply_markup=export_menu())

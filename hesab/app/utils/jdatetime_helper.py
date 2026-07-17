@@ -150,6 +150,19 @@ def get_week_end_jalali() -> str:
     return end.strftime("%Y/%m/%d")
 
 
+def get_days_between(start_date: str, end_date: str) -> int:
+    """Calculate the number of days between two Jalali date strings."""
+    try:
+        parts_start = start_date.split("/")
+        parts_end = end_date.split("/")
+        start = jdatetime.date(int(parts_start[0]), int(parts_start[1]), int(parts_start[2]))
+        end = jdatetime.date(int(parts_end[0]), int(parts_end[1]), int(parts_end[2]))
+        delta = end - start
+        return max(1, delta.days + 1)  # +1 to include both start and end days
+    except (ValueError, IndexError):
+        return 1
+
+
 def normalize_bank_name(name: str) -> str:
     """Normalize a bank name by stripping redundant prefixes.
 

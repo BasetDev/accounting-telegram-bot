@@ -121,23 +121,56 @@ RECEIVABLE_DUE_TODAY_EMPTY = "📭 هیچ طلب با سررسید امروز و
 RECEIVABLE_DUE_WEEK_EMPTY = "📭 هیچ طلب با سررسید این هفته وجود ندارد."
 
 # Report titles for debt/receivable
-DEBT_REPORT_TITLE = """📊 گزارش بدهی‌ها
+DEBT_REPORT_TITLE = """📊 گزارش جامع بدهی‌ها
+━━━━━━━━━━━━━━━━━━
 
-📋 کل بدهی‌ها: {total} مورد
-💰 مجموع مبلغ: {total_amount} تومان
-⏳ فعال: {active} مورد ({active_amount} تومان)
-✅ تسویه شده: {settled} مورد ({settled_amount} تومان)
-🔴 سررسید گذشته: {overdue} مورد ({overdue_amount} تومان)
-⏰ سررسید امروز: {due_today} مورد"""
+📋 خلاصه کلی
+├── تعداد کل: {total} مورد
+└── مجموع مبلغ: {total_amount} تومان
 
-RECEIVABLE_REPORT_TITLE = """📊 گزارش طلب‌ها
+⏳ بدهی‌های فعال
+├── تعداد: {active} مورد
+└── مبلغ: {active_amount} تومان
 
-📋 کل طلب‌ها: {total} مورد
-💰 مجموع مبلغ: {total_amount} تومان
-⏳ فعال: {active} مورد ({active_amount} تومان)
-✅ تسویه شده: {settled} مورد ({settled_amount} تومان)
-🔴 سررسید گذشته: {overdue} مورد ({overdue_amount} تومان)
-⏰ سررسید امروز: {due_today} مورد"""
+✅ تسویه شده
+├── تعداد: {settled} مورد
+└── مبلغ: {settled_amount} تومان
+
+🔴 سررسید گذشته
+├── تعداد: {overdue} مورد
+└── مبلغ: {overdue_amount} تومان
+
+⏰ سررسید امروز: {due_today} مورد
+
+━━━━━━━━━━━━━━━━━━
+📊 نسبت تسویه: {settlement_rate}%
+📊 میانگین بدهی: {avg_debt} تومان"""
+
+RECEIVABLE_REPORT_TITLE = """📊 گزارش جامع طلب‌ها
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه کلی
+├── تعداد کل: {total} مورد
+└── مجموع مبلغ: {total_amount} تومان
+
+⏳ طلب‌های فعال
+├── تعداد: {active} مورد
+└── مبلغ: {active_amount} تومان
+
+✅ وصول شده
+├── تعداد: {settled} مورد
+└── مبلغ: {settled_amount} تومان
+
+🔴 سررسید گذشته
+├── تعداد: {overdue} مورد
+└── مبلغ: {overdue_amount} تومان
+
+⏰ سررسید امروز: {due_today} مورد
+
+━━━━━━━━━━━━━━━━━━
+📊 نسبت وصول: {collection_rate}%
+📊 میانگین طلب: {avg_receivable} تومان
+💰 مجموع دریافتی: {total_paid} تومان"""
 
 # Error messages
 INVALID_AMOUNT = "⚠️ مبلغ وارد شده معتبر نیست. لطفاً فقط عدد وارد کنید."
@@ -182,18 +215,34 @@ CUSTOMER_INFO = """👤 اطلاعات مشتری
 
 # Report messages
 REPORT_TITLE = """📈 گزارش مالی {period}
+━━━━━━━━━━━━━━━━━━
 
-🔄 از تاریخ: {start}
-🔄 تا تاریخ: {end}
+🔄 بازه زمانی
+├── از: {start}
+└── تا: {end}
 
-💰 مجموع درآمد: {income} تومان
-💸 مجموع هزینه: {expense} تومان
-📋 مجموع بدهی: {debt} تومان
-📌 مجموع طلب: {receivable} تومان
+💰 درآمدها
+└── مجموع: {income} تومان
 
+💸 هزینه‌ها
+└── مجموع: {expense} تومان
+
+📋 بدهی‌ها
+└── مجموع: {debt} تومان
+
+📌 طلب‌ها
+└── مجموع: {receivable} تومان
+
+━━━━━━━━━━━━━━━━━━
 {balance_line}
 
-📊 وضعیت حساب: {status}"""
+📊 وضعیت حساب: {status}
+
+━━━━━━━━━━━━━━━━━━
+📈 خلاصه عملکرد
+├── تعداد تراکنش‌ها: {txn_count} مورد
+├── میانگین درآمد روزانه: {avg_daily_income} تومان
+└── میانگین هزینه روزانه: {avg_daily_expense} تومان"""
 
 REPORT_PERIODS = {
     "daily": "روزانه",
