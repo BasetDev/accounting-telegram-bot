@@ -247,9 +247,10 @@ def debt_submenu() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="💳 پرداخت بدهی", callback_data="debt_pay_cat"),
-        InlineKeyboardButton(text="📊 گزارش بدهی‌ها", callback_data="debt_reports")
+        InlineKeyboardButton(text="📊 تسویه‌ها", callback_data="settlement_debt")
     )
     builder.row(
+        InlineKeyboardButton(text="📊 گزارش بدهی‌ها", callback_data="debt_reports"),
         InlineKeyboardButton(text="📋 ثبت بدهی جدید", callback_data="debt_register")
     )
     return builder.as_markup()
@@ -272,9 +273,10 @@ def receivable_submenu() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="💵 دریافت طلب", callback_data="receivable_receive_cat"),
-        InlineKeyboardButton(text="📊 گزارش طلب‌ها", callback_data="receivable_reports")
+        InlineKeyboardButton(text="📊 تسویه‌ها", callback_data="settlement_recv")
     )
     builder.row(
+        InlineKeyboardButton(text="📊 گزارش طلب‌ها", callback_data="receivable_reports"),
         InlineKeyboardButton(text="📌 ثبت طلب جدید", callback_data="receivable_register")
     )
     return builder.as_markup()
@@ -1006,4 +1008,57 @@ def settled_debt_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, h
         builder.row(*buttons)
     builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"debt_payment_history:{txn_id}"))
     builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"ds_bi:{cache_key}:{safe_party}"))
+    return builder.as_markup()
+
+
+def settlement_submenu() -> InlineKeyboardMarkup:
+    """Settlement submenu keyboard - combines debt and receivable settlements."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="💳 تسویه بدهی‌ها", callback_data="settlement_debt"),
+        InlineKeyboardButton(text="💵 تسویه طلب‌ها", callback_data="settlement_recv")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📊 گزارش تسویه‌ها", callback_data="settlement_reports")
+    )
+    return builder.as_markup()
+
+
+def settlement_customer_keyboard(customers_data: list, back_callback: str = "settlement_back") -> InlineKeyboardMarkup:
+    """Keyboard for selecting a customer in settlement hierarchy."""
+    builder = InlineKeyboardBuilder()
+    for item in customers_data:
+        builder.row(InlineKeyboardButton(text=item["label"], callback_data=item["callback_data"]))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_callback))
+    return builder.as_markup()
+
+
+def settlement_items_keyboard(items_data: list, cache_key: str, back_callback: str = "settlement_back") -> InlineKeyboardMarkup:
+    """Keyboard showing settlement items of a customer."""
+    builder = InlineKeyboardBuilder()
+    for item in items_data:
+        builder.row(
+            InlineKeyboardButton(text=item["label"], callback_data=item["callback_data"]),
+            InlineKeyboardButton(text="📋 جزئیات", callback_data=item["detail_callback"])
+        )
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به مشتریان", callback_data=f"stl_bc:{cache_key}"))
+    return builder.as_markup()
+
+
+def settlement_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
+                                has_photo: bool = False, has_payment_photo: bool = False,
+                                txn_type: str = "debt") -> InlineKeyboardMarkup:
+    """Keyboard for settlement detail view with all actions."""
+    builder = InlineKeyboardBuilder()
+    buttons = []
+    if has_photo:
+        buttons.append(InlineKeyboardButton(text="📸 مشاهده عکس", callback_data=f"view_photo:{txn_id}"))
+    if has_payment_photo:
+        buttons.append(InlineKeyboardButton(text="📸 رسید پرداخت", callback_data=f"view_payment_photo:{txn_id}"))
+    if buttons:
+        builder.row(*buttons)
+
+    history_cb = f"debt_payment_history:{txn_id}" if txn_type == "debt" else f"receivable_payment_history:{txn_id}"
+    builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=history_cb))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"stl_bi:{cache_key}:{safe_party}"))
     return builder.as_markup()

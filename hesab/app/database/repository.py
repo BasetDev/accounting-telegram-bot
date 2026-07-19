@@ -174,15 +174,27 @@ class TransactionRepository:
     @staticmethod
     def get_with_payments(user_id: int, transaction_type: str,
                           limit: int = 50) -> List[Dict]:
-        """Get transactions that have at least one payment recorded."""
+        """Get transactions that have at least one payment recorded.
+
+        Returns both partially paid AND fully settled transactions.
+        This is the primary query for the Settlement (تسویه) section.
+        """
         payments = get_collection("payments")
         txn_ids = payments.distinct("transaction_id", {"user_id": user_id})
 
+        if not txn_ids:
+            return []
+
+        # Also include transactions marked as settled (is_settled=True)
+        # in case settle was done without a payment record
         transactions = get_collection("transactions")
         query = {
             "user_id": user_id,
             "transaction_type": transaction_type,
-            "id": {"$in": txn_ids}
+            "$or": [
+                {"id": {"$in": txn_ids}},
+                {"is_settled": True}
+            ]
         }
         result = []
         for txn in transactions.find(query).sort("id", DESCENDING).limit(limit):

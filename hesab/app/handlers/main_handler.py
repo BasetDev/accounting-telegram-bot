@@ -5,6 +5,7 @@ import re
 import shutil
 import asyncio
 import time
+import jdatetime
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
@@ -51,7 +52,11 @@ from app.keyboards.markups import (
     settled_recv_detail_keyboard,
     settled_debt_customer_keyboard,
     settled_debt_items_keyboard,
-    settled_debt_detail_keyboard
+    settled_debt_detail_keyboard,
+    settlement_submenu,
+    settlement_customer_keyboard,
+    settlement_items_keyboard,
+    settlement_detail_keyboard
 )
 from app.utils.messages import *
 from app.utils.jdatetime_helper import (
@@ -792,6 +797,13 @@ async def debt_due_date(message: Message, state: FSMContext):
         if not re.match(r"^\d{4}/\d{2}/\d{2}$", message.text):
             await message.answer(INVALID_DATE)
             return
+        # Validate actual Jalali date
+        try:
+            parts = message.text.split("/")
+            jdatetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
+            await message.answer(INVALID_DATE)
+            return
         due_date = message.text
         due_time = None
     
@@ -1277,6 +1289,13 @@ async def receivable_due_date(message: Message, state: FSMContext):
         due_time = get_jalali_time()
     else:
         if not re.match(r"^\d{4}/\d{2}/\d{2}$", message.text):
+            await message.answer(INVALID_DATE)
+            return
+        # Validate actual Jalali date
+        try:
+            parts = message.text.split("/")
+            jdatetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
             await message.answer(INVALID_DATE)
             return
         due_date = message.text
@@ -1799,7 +1818,7 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
     if data.get('due_time'):
         due_display += f" ساعت {data['due_time']}"
     field_prompts = {
-        "amount": f"💰 مبلغ جدید را وارد کنید:\n(مبلغ فعلی: {format_amount(data['amount'])} تومان)\n\nبرای عدم تغییر، عدد 0 را وارد کنید.",
+        "amount": f"💰 مبلغ جدید را وارد کنید:\n(مبلغ فعلی: {format_amount(data['amount'])} تومان)\n\nبرای عدم تغییر، - را وارد کنید.",
         "party": f"👤 نام طرف حساب جدید را وارد کنید:\n(مقدار فعلی: {data['party'] or '-'})\n\nبرای عدم تغییر، - را وارد کنید.",
         "description": f"📝 توضیحات جدید را وارد کنید:\n(مقدار فعلی: {data['description'] or '-'})\n\nبرای عدم تغییر، - را وارد کنید.",
         "due_date": f"📅 تاریخ سررسید جدید را وارد کنید (فرمت: YYYY/MM/DD):\n(مقدار فعلی: {due_display})\n\nبرای عدم تغییر، - را وارد کنید.\n📅 امروز برای تنظیم سررسید به امروز.",
@@ -1839,14 +1858,14 @@ async def edit_amount_handler(message: Message, state: FSMContext):
         await message.answer(BACK_TEXT, reply_markup=main_menu())
         return
     
-    if message.text not in ["0", "0.0"]:
+    if message.text not in ["-", "0"]:
         try:
             amount = float(message.text.replace(",", "").replace("٬", ""))
             if amount <= 0:
                 raise ValueError
             await state.update_data(amount=amount)
         except ValueError:
-            await message.answer("⚠️ مبلغ وارد شده معتبر نیست. عدد 0 برای عدم تغییر.")
+            await message.answer("⚠️ مبلغ وارد شده معتبر نیست. برای عدم تغییر، - را وارد کنید.")
             return
     
     data = await state.get_data()
@@ -1925,6 +1944,13 @@ async def edit_due_date_handler(message: Message, state: FSMContext):
         await state.update_data(due_date=get_jalali_date(), due_time=get_jalali_time())
     elif message.text not in ["-", "0"]:
         if not re.match(r"^\d{4}/\d{2}/\d{2}$", message.text):
+            await message.answer(INVALID_DATE)
+            return
+        # Validate actual Jalali date
+        try:
+            parts = message.text.split("/")
+            jdatetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
             await message.answer(INVALID_DATE)
             return
         await state.update_data(due_date=message.text, due_time=None)
@@ -5206,6 +5232,549 @@ async def debt_settled_back_to_items(callback: CallbackQuery):
     await safe_callback_answer(callback)
 
 
+# ==============================
+# Settlement Section (Unified)
+# ==============================
+
+# In-memory cache for settlement groups
+_settlement_groups_cache: dict = {}
+_settlement_groups_lock = asyncio.Lock()
+
+
+def _build_settlement_status_text(txn: dict, total_paid: float, remaining: float) -> str:
+    """Build status indicator text for a settlement item."""
+    amount = txn["amount"]
+    if amount <= 0:
+        return "🟢 100%"
+
+    pct = int((total_paid / amount) * 100)
+    if remaining <= 0 or txn["is_settled"]:
+        return f"🟢 {pct}%"
+    elif pct >= 75:
+        return f"🟡 {pct}%"
+    elif pct >= 50:
+        return f"🟡 {pct}%"
+    elif pct >= 25:
+        return f"🟡 {pct}%"
+    else:
+        return f"🟡 {pct}%"
+
+
+@router.callback_query(F.data == "settlement_debt")
+async def settlement_debt_list(callback: CallbackQuery):
+    """Show all debts with payments (partially or fully settled), grouped by customer."""
+    await safe_delete(callback.message)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    txns = TransactionRepository.get_with_payments(user["id"], "debt")
+    if not txns:
+        await callback.message.answer(SETTLEMENT_DEBT_EMPTY, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    groups = _group_receivables_by_customer(txns)
+    cache_key = f"settlement_debt_{user['id']}"
+    async with _settlement_groups_lock:
+        _settlement_groups_cache[cache_key] = {g["party"]: g for g in groups}
+        _evict_cache(_settlement_groups_cache)
+
+    total_amount = sum(g["total"] for g in groups)
+    total_remaining = sum(g["remaining"] for g in groups)
+    total_paid = total_amount - total_remaining
+    total_items = sum(g["count"] for g in groups)
+    total_customers = len(groups)
+
+    summary = f"📊 {SETTLEMENT_DEBT_TITLE}\n\n"
+    summary += f"💰 مجموع بدهی: {format_amount(total_amount)} تومان\n"
+    summary += f"💰 مجموع پرداختی: {format_amount(total_paid)} تومان\n"
+    if total_remaining > 0:
+        pct = int((total_paid / total_amount) * 100) if total_amount > 0 else 0
+        summary += f"💰 مجموع باقی‌مانده: {format_amount(total_remaining)} تومان\n"
+        summary += f"📊 درصد تسویه: {pct}%\n"
+    else:
+        summary += f"🟢 کاملاً تسویه شده\n"
+    summary += f"👥 {total_customers} مشتری | 📌 {total_items} مورد"
+
+    await callback.message.answer(summary)
+
+    buttons_data = []
+    for g in groups:
+        paid = g["total"] - g["remaining"]
+        if g["remaining"] <= 0:
+            pct = 100
+            label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
+        elif paid > 0:
+            pct = int((paid / g["total"]) * 100) if g["total"] > 0 else 0
+            label = f"🟡 {g['party']} | {format_amount(paid)}/{format_amount(g['total'])} تومان ({pct}%) ({g['count']} مورد)"
+        else:
+            label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
+        safe_key = g["party"].replace(":", "_")
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"stl_cust:{cache_key}:{safe_key}"
+        })
+
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_customer_keyboard(buttons_data, "debt_settled_cat")
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "settlement_recv")
+async def settlement_recv_list(callback: CallbackQuery):
+    """Show all receivables with payments (partially or fully settled), grouped by customer."""
+    await safe_delete(callback.message)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    txns = TransactionRepository.get_with_payments(user["id"], "receivable")
+    if not txns:
+        await callback.message.answer(SETTLEMENT_RECV_EMPTY, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    groups = _group_receivables_by_customer(txns)
+    cache_key = f"settlement_recv_{user['id']}"
+    async with _settlement_groups_lock:
+        _settlement_groups_cache[cache_key] = {g["party"]: g for g in groups}
+        _evict_cache(_settlement_groups_cache)
+
+    total_amount = sum(g["total"] for g in groups)
+    total_remaining = sum(g["remaining"] for g in groups)
+    total_paid = total_amount - total_remaining
+    total_items = sum(g["count"] for g in groups)
+    total_customers = len(groups)
+
+    summary = f"📊 {SETTLEMENT_RECV_TITLE}\n\n"
+    summary += f"💰 مجموع طلب: {format_amount(total_amount)} تومان\n"
+    summary += f"💰 مجموع دریافتی: {format_amount(total_paid)} تومان\n"
+    if total_remaining > 0:
+        pct = int((total_paid / total_amount) * 100) if total_amount > 0 else 0
+        summary += f"💰 مجموع باقی‌مانده: {format_amount(total_remaining)} تومان\n"
+        summary += f"📊 درصد تسویه: {pct}%\n"
+    else:
+        summary += f"🟢 کاملاً تسویه شده\n"
+    summary += f"👥 {total_customers} مشتری | 📌 {total_items} مورد"
+
+    await callback.message.answer(summary)
+
+    buttons_data = []
+    for g in groups:
+        paid = g["total"] - g["remaining"]
+        if g["remaining"] <= 0:
+            pct = 100
+            label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
+        elif paid > 0:
+            pct = int((paid / g["total"]) * 100) if g["total"] > 0 else 0
+            label = f"🟡 {g['party']} | {format_amount(paid)}/{format_amount(g['total'])} تومان ({pct}%) ({g['count']} مورد)"
+        else:
+            label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
+        safe_key = g["party"].replace(":", "_")
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"stl_cust:{cache_key}:{safe_key}"
+        })
+
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_customer_keyboard(buttons_data, "receivable_settled_cat")
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("stl_cust:"))
+async def settlement_customer_selected(callback: CallbackQuery):
+    """Show list of settlement items for a selected customer."""
+    parts = callback.data.split(":", 2)
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    cache_key = parts[1]
+    safe_party = parts[2]
+
+    async with _settlement_groups_lock:
+        cached = _settlement_groups_cache.get(cache_key)
+    if not cached:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    group = None
+    for party, g in cached.items():
+        if party.replace(":", "_") == safe_party:
+            group = g
+            break
+
+    if not group:
+        await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
+        return
+
+    txns = group["txns"]
+    party = group["party"]
+    total = group["total"]
+    count = group["count"]
+    remaining = group.get("remaining", 0)
+    paid = total - remaining
+    percentage = int((paid / total) * 100) if total > 0 else 0
+
+    # Determine txn type from cache key
+    txn_type = "debt" if cache_key.startswith("settlement_debt_") else "receivable"
+    type_label = "بدهی" if txn_type == "debt" else "طلب"
+
+    text = f"👤 {party}\n"
+    text += f"💰 مجموع {type_label}: {format_amount(total)} تومان\n"
+    text += f"💰 مجموع پرداختی: {format_amount(paid)} تومان\n"
+    if remaining > 0:
+        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    text += f"📊 درصد تسویه: {percentage}%\n"
+    text += f"📌 {count} مورد\n"
+    text += "——————————"
+
+    items_data = []
+    for txn in txns:
+        txn_remaining = PaymentRepository.get_remaining(txn["id"], txn["amount"])
+        txn_paid = txn["amount"] - txn_remaining
+        if txn["is_settled"] or txn_remaining <= 0:
+            txn_pct = 100
+            label = f"🟢 #{txn['id']} | {format_amount(txn['amount'])} تومان (100%)"
+        else:
+            txn_pct = int((txn_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+            label = f"🟡 #{txn['id']} | {format_amount(txn_paid)}/{format_amount(txn['amount'])} تومان ({txn_pct}%)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"stl_item:{txn['id']}",
+            "detail_callback": f"stl_item:{txn['id']}"
+        })
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        f"📋 {type_label} مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_items_keyboard(items_data, cache_key)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("stl_item:"))
+async def settlement_item_detail(callback: CallbackQuery):
+    """Show full details for a settlement item (debt or receivable)."""
+    try:
+        txn_id = int(callback.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    txn = TransactionRepository.get_by_id(txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ مورد یافت نشد.", show_alert=True)
+        return
+
+    # Build full detail text
+    payments = PaymentRepository.get_by_transaction(txn["id"])
+    total_paid = sum(p["amount"] for p in payments) if payments else 0
+    remaining = max(0, txn["amount"] - total_paid)
+    is_fully_settled = txn["is_settled"] or remaining <= 0
+    percentage = int((total_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+
+    txn_type = txn["transaction_type"]
+    type_label = "بدهی" if txn_type == "debt" else "طلب"
+
+    if is_fully_settled:
+        text = f"🟢 جزئیات {type_label} تسویه شده (100%)\n\n"
+    else:
+        text = f"🟡 جزئیات {type_label} با پرداخت جزئی ({percentage}%)\n\n"
+
+    text += f"🆔 شناسه: {txn['id']}\n"
+    text += f"👤 مشتری: {txn['party_name'] or '-'}\n"
+
+    cat_str = txn["category"] or "-"
+    if txn["subcategory"]:
+        cat_str += f" / {txn['subcategory']}"
+    text += f"🏷 دسته‌بندی: {cat_str}\n"
+    text += f"💰 مبلغ کل: {format_amount(txn['amount'])} تومان\n"
+    text += f"💰 مبلغ پرداختی: {format_amount(total_paid)} تومان\n"
+    if remaining > 0:
+        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    text += f"📊 درصد تسویه: {percentage}%\n"
+
+    # Settlement date
+    if txn["settled_at"]:
+        try:
+            import jdatetime
+            from pytz import timezone as tz
+            iran_tz = tz("Asia/Tehran")
+            settled_local = txn["settled_at"].replace(tzinfo=tz("UTC")).astimezone(iran_tz) if txn["settled_at"].tzinfo else txn["settled_at"].astimezone(iran_tz)
+            settled_jalali = jdatetime.datetime.fromgregorian(datetime=settled_local)
+            text += f"✅ تاریخ تسویه: {settled_jalali.strftime('%Y/%m/%d - %H:%M:%S')}\n"
+        except Exception:
+            pass
+
+    if txn["description"]:
+        text += f"📝 توضیحات: {txn['description']}\n"
+
+    # Due date
+    if txn["due_jalali_date"]:
+        time_str = f" ساعت {txn['due_jalali_time']}" if txn["due_jalali_time"] else ""
+        text += f"📅 سررسید: {txn['due_jalali_date']}{time_str}\n"
+
+    # Photo/attachment
+    has_photo = bool(txn["photo_path"])
+    has_payment_photo = any(p["photo_path"] for p in payments) if payments else False
+    if has_photo:
+        text += f"📸 عکس: ✅ دارد\n"
+    if has_payment_photo:
+        text += f"📸 رسید پرداخت: ✅ دارد\n"
+
+    # Payment method info
+    if txn["card_number"]:
+        card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 شماره کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn['sheba']}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {txn['bank_name']}\n"
+
+    # Payment details from payments table
+    if payments:
+        text += f"\n📊 سوابق پرداخت ({len(payments)} فقره):\n"
+        for p in payments:
+            text += f"  💰 {format_amount(p['amount'])} تومان"
+            text += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                text += f" | {p['description']}"
+            if p["photo_path"]:
+                text += f" | 📸 رسید"
+            text += "\n"
+
+    # Registration date
+    text += f"\n📅 تاریخ ثبت: {txn['jalali_date']} ساعت {txn['jalali_time']}"
+
+    # Find the cache key for back navigation
+    cache_key = ""
+    safe_party = ""
+    async with _settlement_groups_lock:
+        for ck, groups_dict in _settlement_groups_cache.items():
+            for party, g in groups_dict.items():
+                for t in g.get("txns", []):
+                    if t["id"] == txn["id"]:
+                        cache_key = ck
+                        safe_party = party.replace(":", "_")
+                        break
+                if cache_key:
+                    break
+            if cache_key:
+                break
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=settlement_detail_keyboard(
+            txn["id"], cache_key, safe_party,
+            has_photo, has_payment_photo, txn_type
+        )
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("stl_bc:"))
+async def settlement_back_to_customers(callback: CallbackQuery):
+    """Navigate back from settlement item list to customer list."""
+    cache_key = callback.data.split(":", 1)[1]
+
+    async with _settlement_groups_lock:
+        cached = _settlement_groups_cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text(MENU_TEXT, reply_markup=main_menu())
+        await safe_callback_answer(callback)
+        return
+
+    groups = list(cached.values())
+    total_amount = sum(g["total"] for g in groups)
+    total_items = sum(g["count"] for g in groups)
+    total_customers = len(groups)
+    total_remaining = sum(g["remaining"] for g in groups)
+    total_paid = total_amount - total_remaining
+
+    txn_type = "debt" if cache_key.startswith("settlement_debt_") else "receivable"
+    type_label = "بدهی" if txn_type == "debt" else "طلب"
+    title = SETTLEMENT_DEBT_TITLE if txn_type == "debt" else SETTLEMENT_RECV_TITLE
+
+    summary = f"📊 {title}\n\n"
+    summary += f"💰 مجموع {type_label}: {format_amount(total_amount)} تومان\n"
+    summary += f"💰 مجموع پرداختی: {format_amount(total_paid)} تومان\n"
+    if total_remaining > 0:
+        pct = int((total_paid / total_amount) * 100) if total_amount > 0 else 0
+        summary += f"💰 مجموع باقی‌مانده: {format_amount(total_remaining)} تومان\n"
+        summary += f"📊 درصد تسویه: {pct}%\n"
+    else:
+        summary += f"🟢 کاملاً تسویه شده\n"
+    summary += f"👥 {total_customers} مشتری | 📌 {total_items} مورد"
+
+    buttons_data = []
+    for g in groups:
+        paid = g["total"] - g["remaining"]
+        if g["remaining"] <= 0:
+            label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
+        elif paid > 0:
+            pct = int((paid / g["total"]) * 100) if g["total"] > 0 else 0
+            label = f"🟡 {g['party']} | {format_amount(paid)}/{format_amount(g['total'])} تومان ({pct}%) ({g['count']} مورد)"
+        else:
+            label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
+        safe_key = g["party"].replace(":", "_")
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"stl_cust:{cache_key}:{safe_key}"
+        })
+
+    back_cb = "debt_settled_cat" if txn_type == "debt" else "receivable_settled_cat"
+    await callback.message.edit_text(summary)
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_customer_keyboard(buttons_data, back_cb)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("stl_bi:"))
+async def settlement_back_to_items(callback: CallbackQuery):
+    """Navigate back from settlement detail to item list."""
+    parts = callback.data.split(":", 2)
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    cache_key = parts[1]
+    safe_party = parts[2]
+
+    async with _settlement_groups_lock:
+        cached = _settlement_groups_cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text(MENU_TEXT, reply_markup=main_menu())
+        await safe_callback_answer(callback)
+        return
+
+    group = None
+    for party, g in cached.items():
+        if party.replace(":", "_") == safe_party:
+            group = g
+            break
+
+    if not group:
+        await callback.message.edit_text(MENU_TEXT, reply_markup=main_menu())
+        await safe_callback_answer(callback)
+        return
+
+    txns = group["txns"]
+    party = group["party"]
+    total = group["total"]
+    count = group["count"]
+    remaining = group.get("remaining", 0)
+    paid = total - remaining
+    percentage = int((paid / total) * 100) if total > 0 else 0
+
+    txn_type = "debt" if cache_key.startswith("settlement_debt_") else "receivable"
+    type_label = "بدهی" if txn_type == "debt" else "طلب"
+
+    text = f"👤 {party}\n"
+    text += f"💰 مجموع {type_label}: {format_amount(total)} تومان\n"
+    text += f"💰 مجموع پرداختی: {format_amount(paid)} تومان\n"
+    if remaining > 0:
+        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    text += f"📊 درصد تسویه: {percentage}%\n"
+    text += f"📌 {count} مورد\n"
+    text += "——————————"
+
+    items_data = []
+    for txn in txns:
+        txn_remaining = PaymentRepository.get_remaining(txn["id"], txn["amount"])
+        txn_paid = txn["amount"] - txn_remaining
+        if txn["is_settled"] or txn_remaining <= 0:
+            txn_pct = 100
+            label = f"🟢 #{txn['id']} | {format_amount(txn['amount'])} تومان (100%)"
+        else:
+            txn_pct = int((txn_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+            label = f"🟡 #{txn['id']} | {format_amount(txn_paid)}/{format_amount(txn['amount'])} تومان ({txn_pct}%)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"stl_item:{txn['id']}",
+            "detail_callback": f"stl_item:{txn['id']}"
+        })
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        f"📋 {type_label} مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_items_keyboard(items_data, cache_key)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "settlement_reports")
+async def settlement_reports(callback: CallbackQuery):
+    """Show comprehensive settlement report for both debts and receivables."""
+    await safe_delete(callback.message)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    # Get all debts and receivables with payments
+    debt_txns = TransactionRepository.get_with_payments(user["id"], "debt")
+    recv_txns = TransactionRepository.get_with_payments(user["id"], "receivable")
+
+    # Calculate debt settlement stats
+    debt_total = sum(t["amount"] for t in debt_txns) if debt_txns else 0
+    debt_paid = 0
+    for t in debt_txns:
+        payments = PaymentRepository.get_by_transaction(t["id"])
+        debt_paid += sum(p["amount"] for p in payments) if payments else 0
+    debt_remaining = max(0, debt_total - debt_paid)
+    debt_pct = int((debt_paid / debt_total) * 100) if debt_total > 0 else 0
+    debt_fully_settled = len([t for t in debt_txns if t["is_settled"] or PaymentRepository.get_remaining(t["id"], t["amount"]) <= 0]) if debt_txns else 0
+    debt_partial = len(debt_txns) - debt_fully_settled if debt_txns else 0
+
+    # Calculate receivable settlement stats
+    recv_total = sum(t["amount"] for t in recv_txns) if recv_txns else 0
+    recv_paid = 0
+    for t in recv_txns:
+        payments = PaymentRepository.get_by_transaction(t["id"])
+        recv_paid += sum(p["amount"] for p in payments) if payments else 0
+    recv_remaining = max(0, recv_total - recv_paid)
+    recv_pct = int((recv_paid / recv_total) * 100) if recv_total > 0 else 0
+    recv_fully_settled = len([t for t in recv_txns if t["is_settled"] or PaymentRepository.get_remaining(t["id"], t["amount"]) <= 0]) if recv_txns else 0
+    recv_partial = len(recv_txns) - recv_fully_settled if recv_txns else 0
+
+    report = f"""📊 گزارش جامع تسویه‌ها
+━━━━━━━━━━━━━━━━━━
+
+💳 تسویه بدهی‌ها
+├── تعداد کل: {len(debt_txns)} مورد
+├── مجموع بدهی: {format_amount(debt_total)} تومان
+├── مجموع پرداختی: {format_amount(debt_paid)} تومان
+├── باقی‌مانده: {format_amount(debt_remaining)} تومان
+├── درصد تسویه: {debt_pct}%
+├── 🟢 کاملاً تسویه: {debt_fully_settled} مورد
+└── 🟡 پرداخت جزئی: {debt_partial} مورد
+
+💵 تسویه طلب‌ها
+├── تعداد کل: {len(recv_txns)} مورد
+├── مجموع طلب: {format_amount(recv_total)} تومان
+├── مجموع دریافتی: {format_amount(recv_paid)} تومان
+├── باقی‌مانده: {format_amount(recv_remaining)} تومان
+├── درصد تسویه: {recv_pct}%
+├── 🟢 کاملاً تسویه: {recv_fully_settled} مورد
+└── 🟡 پرداخت جزئی: {recv_partial} مورد
+
+━━━━━━━━━━━━━━━━━━
+💰 خالص تسویه: {format_amount(recv_paid - debt_paid)} تومان"""
+
+    await callback.message.answer(report, reply_markup=settlement_submenu())
+    await safe_callback_answer(callback)
+
+
 @router.callback_query(F.data == "receivable_receive_cat")
 async def receivable_receive_cat_menu(callback: CallbackQuery):
     """Show category filter for receive receivable."""
@@ -6600,34 +7169,36 @@ async def backup_create(callback: CallbackQuery):
         # Ensure backup dir exists
         os.makedirs(settings.BACKUP_DIR, exist_ok=True)
         
-        # Get database file path
-        db_path = settings.DATABASE_URL.replace("sqlite:///", "")
-        
-        # Create backup
-        backup_filename = f"hesab_backup_{get_jalali_date().replace('/', '-')}_{get_jalali_time().replace(':', '-')}.db"
-        backup_path = os.path.join(settings.BACKUP_DIR, backup_filename)
-        shutil.copy2(db_path, backup_path)
-        
-        file_size = os.path.getsize(backup_path)
-        
-        # Save backup record
-        BackupRepository.create(
-            user_id=user["id"],
-            filename=backup_filename,
-            file_size=file_size,
-            jalali_date=get_jalali_date(),
-            jalali_time=get_jalali_time()
-        )
-        
-        logger.info(f"Backup created: {backup_filename}")
-        
-        # Send backup file
-        document = FSInputFile(backup_path)
-        await callback.message.edit_text(f"{BACKUP_CREATED}\n📦 حجم: {file_size / 1024:.1f} KB")
-        await callback.message.answer_document(
-            document,
-            caption=f"💾 پشتیبان تاریخ {get_jalali_date()} ساعت {get_jalali_time()}"
-        )
+        # Check if using SQLite or MongoDB
+        db_url = getattr(settings, 'DATABASE_URL', None)
+        if db_url:
+            # SQLite backup
+            db_path = db_url.replace("sqlite:///", "")
+            backup_filename = f"hesab_backup_{get_jalali_date().replace('/', '-')}_{get_jalali_time().replace(':', '-')}.db"
+            backup_path = os.path.join(settings.BACKUP_DIR, backup_filename)
+            shutil.copy2(db_path, backup_path)
+            file_size = os.path.getsize(backup_path)
+            BackupRepository.create(
+                user_id=user["id"],
+                filename=backup_filename,
+                file_size=file_size,
+                jalali_date=get_jalali_date(),
+                jalali_time=get_jalali_time()
+            )
+            logger.info(f"Backup created: {backup_filename}")
+            document = FSInputFile(backup_path)
+            await callback.message.edit_text(f"{BACKUP_CREATED}\n📦 حجم: {file_size / 1024:.1f} KB")
+            await callback.message.answer_document(
+                document,
+                caption=f"💾 پشتیبان تاریخ {get_jalali_date()} ساعت {get_jalali_time()}"
+            )
+        else:
+            # MongoDB - provide guidance
+            await callback.message.edit_text(
+                "ℹ️ برای پشتیبان‌گیری از MongoDB، لطفاً از ابزار mongodump یا MongoDB Atlas استفاده کنید.\n\n"
+                f"📊 دیتابیس: {settings.MONGO_DB_NAME}\n\n"
+                "برای بازیابی از mongorestore استفاده کنید."
+            )
     except Exception as e:
         logger.error(f"Backup error: {e}")
         await callback.message.edit_text(BACKUP_ERROR)
@@ -6659,8 +7230,12 @@ async def backup_restore(callback: CallbackQuery):
         fsize = os.path.getsize(fpath)
         text += f"{i}. 📦 {f}\n   📊 {fsize / 1024:.1f} KB\n\n"
     
-    text += "⚠️ برای بازیابی، لطفاً به صورت دستی فایل پشتیبان را جایگزین فایل دیتابیس اصلی کنید:\n"
-    text += f"📁 مسیر دیتابیس: {settings.DATABASE_URL.replace('sqlite:///', '')}"
+    text += "⚠️ برای بازیابی، لطفاً به صورت دستی فایل پشتیبان را جایگزین فایل دیتابیس اصلی کنید.\n"
+    db_url = getattr(settings, 'DATABASE_URL', None)
+    if db_url:
+        text += f"📁 مسیر دیتابیس: {db_url.replace('sqlite:///', '')}"
+    else:
+        text += f"📊 دیتابیس: {settings.MONGO_DB_NAME} (MongoDB)"
     
     await callback.message.edit_text(text)
     await safe_callback_answer(callback)

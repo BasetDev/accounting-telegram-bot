@@ -339,3 +339,10 @@ DEBT_PAYMENT_HISTORY_EMPTY = "📭 هیچ پرداختی ثبت نشده است.
 
 # Grouped receivable view
 RECEIVABLE_SELECT_RECV = "📋 طلب مورد نظر را انتخاب کنید:"
+
+# Settlement section messages
+SETTLEMENT_DEBT_TITLE = "📊 تسویه بدهی‌ها"
+SETTLEMENT_RECV_TITLE = "📊 تسویه طلب‌ها"
+SETTLEMENT_EMPTY = "📭 هیچ تسویه‌ای ثبت نشده است.\n\nتراکنش‌هایی که حداقل یک پرداخت داشته باشند در این بخش نمایش داده می‌شوند."
+SETTLEMENT_DEBT_EMPTY = "📭 هیچ بدهی با پرداخت ثبت نشده است.\n\nپس از اولین پرداخت بدهی، در این بخش نمایش داده می‌شود."
+SETTLEMENT_RECV_EMPTY = "📭 هیچ طلب با دریافت ثبت نشده است.\n\nپس از اولین دریافت طلب، در این بخش نمایش داده می‌شود."
