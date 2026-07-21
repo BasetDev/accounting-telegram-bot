@@ -91,6 +91,19 @@ def format_amount(amount: float) -> str:
     return formatted
 
 
+def format_amount_for_sms(amount: float) -> str:
+    """Format amount for SMS/copy with English digits, no separators.
+
+    Uses English digits (0-9) without thousand separators.
+    Wraps with LRI/PDI (Left-to-Right Isolate / Pop Directional Isolate)
+    to ensure correct LTR display in RTL context.
+    """
+    formatted = f"{amount:.0f}"
+    # Use LRI (U+2066) + PDI (U+2069) isolate controls
+    # This isolates the number from surrounding RTL text
+    return "\u2066" + formatted + "\u2069"
+
+
 def get_days_until(jalali_date_str: str) -> int:
     """Calculate days from now until given Jalali date."""
     try:

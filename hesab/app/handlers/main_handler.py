@@ -6,6 +6,7 @@ import shutil
 import asyncio
 import time
 import jdatetime
+from datetime import datetime
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command, CommandStart
@@ -64,7 +65,8 @@ from app.utils.jdatetime_helper import (
     get_current_jalali_period, format_amount, get_days_until,
     get_week_end_jalali,
     amount_to_persian_words,
-    normalize_bank_name
+    normalize_bank_name,
+    format_amount_for_sms
 )
 from app.utils.logger import logger
 from app.config import settings
@@ -951,7 +953,7 @@ async def debt_sheba_select(message: Message, state: FSMContext):
         # Move to bank name selection
         user = get_user(message)
         cards = CardInfoRepository.get_by_user(user["id"])
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
         await state.set_state(DebtForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -979,7 +981,7 @@ async def debt_sheba_select(message: Message, state: FSMContext):
         await state.update_data(sheba=sheba_val)
         # Move to bank name selection
         cards = CardInfoRepository.get_by_user(user["id"])
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
         await state.set_state(DebtForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1018,7 +1020,7 @@ async def debt_manual_sheba(message: Message, state: FSMContext):
     # Move to bank name selection
     user = get_user(message)
     cards = CardInfoRepository.get_by_user(user["id"])
-    bank_names = list({c.bank_name for c in cards if c.bank_name})
+    bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
     await state.set_state(DebtForm.bank_name_select)
     await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
 
@@ -1054,7 +1056,7 @@ async def debt_bank_name_select(message: Message, state: FSMContext):
     # Unrecognized input - re-show the keyboard
     user = get_user(message)
     cards = CardInfoRepository.get_by_user(user["id"])
-    bank_names = list({c.bank_name for c in cards if c.bank_name})
+    bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=bank_name_select_keyboard(bank_names))
 
 @router.message(DebtForm.manual_bank_name)
@@ -1068,7 +1070,7 @@ async def debt_manual_bank_name(message: Message, state: FSMContext):
         # Go back to bank_name_select
         user = get_user(message)
         cards = CardInfoRepository.get_by_user(user["id"])
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
         await state.set_state(DebtForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1444,7 +1446,7 @@ async def receivable_sheba_select(message: Message, state: FSMContext):
         # Move to bank name selection
         user = get_user(message)
         cards = CardInfoRepository.get_by_user(user["id"])
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
         await state.set_state(ReceivableForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1472,7 +1474,7 @@ async def receivable_sheba_select(message: Message, state: FSMContext):
         await state.update_data(sheba=sheba_val)
         # Move to bank name selection
         cards = CardInfoRepository.get_by_user(user["id"])
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
         await state.set_state(ReceivableForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -1511,7 +1513,7 @@ async def receivable_manual_sheba(message: Message, state: FSMContext):
     # Move to bank name selection
     user = get_user(message)
     cards = CardInfoRepository.get_by_user(user["id"])
-    bank_names = list({c.bank_name for c in cards if c.bank_name})
+    bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
     await state.set_state(ReceivableForm.bank_name_select)
     await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
 
@@ -1547,7 +1549,7 @@ async def receivable_bank_name_select(message: Message, state: FSMContext):
     # Unrecognized input - re-show the keyboard
     user = get_user(message)
     cards = CardInfoRepository.get_by_user(user["id"])
-    bank_names = list({c.bank_name for c in cards if c.bank_name})
+    bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
     await message.answer("⚠️ لطفاً از گزینه‌های موجود استفاده کنید.", reply_markup=bank_name_select_keyboard(bank_names))
 
 @router.message(ReceivableForm.manual_bank_name)
@@ -1561,7 +1563,7 @@ async def receivable_manual_bank_name(message: Message, state: FSMContext):
         # Go back to bank_name_select
         user = get_user(message)
         cards = CardInfoRepository.get_by_user(user["id"])
-        bank_names = list({c.bank_name for c in cards if c.bank_name})
+        bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
         await state.set_state(ReceivableForm.bank_name_select)
         await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
         return
@@ -2526,6 +2528,31 @@ _debt_groups_lock = asyncio.Lock()
 _card_groups_cache: dict = {}
 _card_groups_lock = asyncio.Lock()
 
+# Callback data index to keep callback data under Telegram's 64-byte limit
+# Maps short numeric ID -> (cache_key, safe_party, extra_data)
+_callback_index: dict = {}
+_callback_index_lock = asyncio.Lock()
+_callback_index_counter = 0
+
+async def _register_callback_data(cache_key: str, safe_party: str, extra_data: str = "") -> str:
+    """Register callback data and return a short numeric ID."""
+    global _callback_index_counter
+    async with _callback_index_lock:
+        _callback_index_counter += 1
+        short_id = str(_callback_index_counter)
+        _callback_index[short_id] = (cache_key, safe_party, extra_data)
+        # Evict old entries if too many
+        if len(_callback_index) > 1000:
+            keys_to_remove = list(_callback_index.keys())[:500]
+            for k in keys_to_remove:
+                del _callback_index[k]
+        return short_id
+
+async def _lookup_callback_data(short_id: str) -> tuple:
+    """Look up callback data by short ID."""
+    async with _callback_index_lock:
+        return _callback_index.get(short_id)
+
 def _evict_cache(cache: dict, max_size: int = _RECV_CACHE_MAX):
     """Evict oldest entries from cache if it exceeds max size."""
     if len(cache) > max_size:
@@ -2571,9 +2598,10 @@ async def _send_grouped_receivable_list(message: Message, txns: list, title: str
         else:
             label = f"✅ {g['party']} | تسویه شده ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"recv_detail:{cache_key}:{safe_key}"
+            "callback_data": f"debt_all_cust:{short_id}"
         })
 
     await message.answer(
@@ -2626,9 +2654,10 @@ async def _send_settled_customer_list(message: Message, txns: list, title: str,
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"rs_cust:{cache_key}:{safe_key}"
+            "callback_data": f"rs_cust:{short_id}"
         })
 
     await message.answer(
@@ -2681,9 +2710,10 @@ async def _send_settled_debt_list(message: Message, txns: list, title: str,
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"ds_cust:{cache_key}:{safe_key}"
+            "callback_data": f"ds_cust:{short_id}"
         })
 
     await message.answer(
@@ -2723,9 +2753,10 @@ async def _send_grouped_customer_pay_list(message: Message, txns: list):
     for g in active_groups:
         safe_key = g["party"].replace(":", "_")
         label = f"👤 {g['party']} | {format_amount(g['remaining'])} تومان ({g['active_count']} فقره)"
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"recv_pay_cust:{cache_key}:{safe_key}"
+            "callback_data": f"recv_pay_cust:{short_id}"
         })
 
     if buttons_data:
@@ -2737,13 +2768,13 @@ async def _send_grouped_customer_pay_list(message: Message, txns: list):
 @router.callback_query(F.data.startswith("recv_pay_cust:"))
 async def recv_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
     """Handle customer selection — skip individual txn selection, go directly to payment flow."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -2824,9 +2855,10 @@ async def _send_grouped_customer_debt_list(message: Message, txns: list):
     for g in active_groups:
         safe_key = g["party"].replace(":", "_")
         label = f"👤 {g['party']} | {format_amount(g['remaining'])} تومان ({g['active_count']} فقره)"
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"debt_pay_cust:{cache_key}:{safe_key}"
+            "callback_data": f"debt_pay_cust:{short_id}"
         })
 
     if buttons_data:
@@ -2838,13 +2870,13 @@ async def _send_grouped_customer_debt_list(message: Message, txns: list):
 @router.callback_query(F.data.startswith("debt_pay_cust:"))
 async def debt_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
     """Handle customer selection for pay debt — go directly to payment flow."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -2934,9 +2966,10 @@ async def _send_grouped_debt_list(message: Message, txns: list, title: str,
         else:
             label = f"✅ {g['party']} | تسویه شده ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"debt_all_cust:{cache_key}:{safe_key}"
+            "callback_data": f"debt_all_cust:{short_id}"
         })
 
     await message.answer(
@@ -3000,9 +3033,10 @@ async def debt_active_list(callback: CallbackQuery):
         buttons_data = []
         for g in groups:
             safe_key = g["party"].replace(":", "_")
+            short_id = await _register_callback_data(cache_key, safe_key)
             buttons_data.append({
                 "label": f"▶ مشاهده بدهی‌های {g['party']}",
-                "callback_data": f"debt_cust_detail:{cache_key}:{safe_key}"
+                "callback_data": f"debt_cust_detail:{short_id}"
             })
 
         await callback.message.answer(
@@ -3422,13 +3456,18 @@ async def debt_reports(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_cust_detail:"))
 async def debt_customer_detail(callback: CallbackQuery):
     """Level 2: Show debts for a selected customer."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _debt_groups_lock:
         cached = _debt_groups_cache.get(cache_key)
@@ -3471,12 +3510,13 @@ async def debt_customer_detail(callback: CallbackQuery):
                 due_emoji = "🟡"
             else:
                 due_emoji = "🟢"
-        label = f"📋 #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+        label = f"📋 #{txn['id']} | {format_amount(txn['amount'])} تومان"
         if due_emoji:
-            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+            label = f"{due_emoji} #{txn['id']} | {format_amount(txn['amount'])} تومان"
+        short_id = await _register_callback_data(cache_key, safe_party, str(txn["id"]))
         txns_data.append({
             "label": label,
-            "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+            "callback_data": f"debt_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
         })
 
     await callback.message.answer(
@@ -3488,13 +3528,18 @@ async def debt_customer_detail(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_all_cust:"))
 async def debt_all_customer_detail(callback: CallbackQuery):
     """Level 2: Show all debts for a selected customer (from All Debts view)."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _debt_groups_lock:
         cached = _debt_groups_cache.get(cache_key)
@@ -3555,13 +3600,14 @@ async def debt_all_customer_detail(callback: CallbackQuery):
 
         txns_data.append({
             "label": label,
-            "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+            "callback_data": f"debt_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
         })
 
     # Determine back callback based on cache key prefix
     back_callback = "debt_group_back"
     if cache_key.startswith("debt_all_"):
-        back_callback = f"debt_all_back:{cache_key}"
+        back_short_id = await _register_callback_data(cache_key, safe_party, "__back__")
+        back_callback = f"debt_all_back:{back_short_id}"
 
     await callback.message.answer(
         "📋 بدهی مورد نظر را انتخاب کنید:",
@@ -3572,7 +3618,14 @@ async def debt_all_customer_detail(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_all_back:"))
 async def debt_all_back_handler(callback: CallbackQuery):
     """Navigate back from Level 2 (customer debt list) to Level 1 (customer list) for All Debts."""
-    cache_key = callback.data.split(":", 1)[1]
+    short_id = callback.data.split(":", 1)[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    cache_key, _, _ = lookup_result
 
     async with _debt_groups_lock:
         cached = _debt_groups_cache.get(cache_key)
@@ -3613,9 +3666,10 @@ async def debt_all_back_handler(callback: CallbackQuery):
         else:
             label = f"✅ {g['party']} | تسویه شده ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"debt_all_cust:{cache_key}:{safe_key}"
+            "callback_data": f"debt_all_cust:{short_id}"
         })
 
     await callback.message.answer(
@@ -3627,15 +3681,20 @@ async def debt_all_back_handler(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_item_detail:"))
 async def debt_item_detail(callback: CallbackQuery):
     """Level 3: Show full details for a specific debt."""
-    parts = callback.data.split(":", 3)
-    if len(parts) < 4:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, txn_id_str = lookup_result
     try:
-        txn_id = int(parts[3])
+        txn_id = int(txn_id_str)
     except ValueError:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
@@ -3707,20 +3766,28 @@ async def debt_item_detail(callback: CallbackQuery):
                 text += f" | 📸 رسید"
             text += "\n"
 
-    kb = debt_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, remaining, has_pay_info, has_payment_photo)
+    back_short_id = await _register_callback_data(cache_key, safe_party)
+    kb = debt_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, remaining, has_pay_info, has_payment_photo,
+                              back_callback=f"debt_detail_back:{back_short_id}")
     await callback.message.edit_text(text, reply_markup=kb)
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("debt_detail_back:"))
 async def debt_detail_back_handler(callback: CallbackQuery):
     """Navigate back from Level 3 (debt details) to Level 2 (customer debt list)."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _debt_groups_lock:
         cached = _debt_groups_cache.get(cache_key)
@@ -3800,13 +3867,14 @@ async def debt_detail_back_handler(callback: CallbackQuery):
 
         txns_data.append({
             "label": label,
-            "callback_data": f"debt_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+            "callback_data": f"debt_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
         })
 
     # Determine back callback
     back_callback = "debt_group_back"
     if is_all_debts:
-        back_callback = f"debt_all_back:{cache_key}"
+        back_short_id = await _register_callback_data(cache_key, safe_party, "__back__")
+        back_callback = f"debt_all_back:{back_short_id}"
 
     await callback.message.edit_text(text)
     await callback.message.answer(
@@ -3907,9 +3975,10 @@ async def receivable_active_list(callback: CallbackQuery):
         buttons_data = []
         for g in groups:
             safe_key = g["party"].replace(":", "_")
+            short_id = await _register_callback_data(cache_key, safe_key)
             buttons_data.append({
                 "label": f"▶ مشاهده طلب‌های {g['party']}",
-                "callback_data": f"recv_cust_detail:{cache_key}:{safe_key}"
+                "callback_data": f"recv_cust_detail:{short_id}"
             })
 
         await callback.message.answer(
@@ -3981,13 +4050,13 @@ async def receivable_due_week_list(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_cust_detail:"))
 async def receivable_customer_detail_active(callback: CallbackQuery):
     """Level 2: Show receivables for a selected customer (active view)."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4035,7 +4104,7 @@ async def receivable_customer_detail_active(callback: CallbackQuery):
             label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
         txns_data.append({
             "label": label,
-            "callback_data": f"recv_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+            "callback_data": f"recv_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
         })
 
     await callback.message.answer(
@@ -4047,15 +4116,20 @@ async def receivable_customer_detail_active(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_item_detail:"))
 async def receivable_item_detail(callback: CallbackQuery):
     """Level 3: Show full details for a specific receivable."""
-    parts = callback.data.split(":", 3)
-    if len(parts) < 4:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, txn_id_str = lookup_result
     try:
-        txn_id = int(parts[3])
+        txn_id = int(txn_id_str)
     except ValueError:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
@@ -4103,20 +4177,28 @@ async def receivable_item_detail(callback: CallbackQuery):
     has_photo = bool(txn["photo_path"])
     has_pay_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
 
-    kb = recv_detail_keyboard(txn_id, cache_key, safe_party, has_photo, remaining, has_pay_info)
+    back_short_id = await _register_callback_data(cache_key, safe_party)
+    kb = recv_detail_keyboard(txn_id, cache_key, safe_party, has_photo, remaining, has_pay_info,
+                              back_callback=f"recv_detail_back:{back_short_id}")
     await callback.message.edit_text(text, reply_markup=kb)
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("recv_detail_back:"))
 async def receivable_detail_back_handler(callback: CallbackQuery):
     """Navigate back from Level 3 (receivable details) to Level 2 (customer receivable list)."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4162,7 +4244,7 @@ async def receivable_detail_back_handler(callback: CallbackQuery):
             label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
         txns_data.append({
             "label": label,
-            "callback_data": f"recv_item_detail:{cache_key}:{safe_party}:{txn["id"]}"
+            "callback_data": f"recv_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
         })
 
     await callback.message.edit_text(text)
@@ -4183,10 +4265,10 @@ async def receivable_payment_history(callback: CallbackQuery):
 
     payments = PaymentRepository.get_by_transaction( txn_id)
     if not payments:
-        await safe_callback_answer(callback, DEBT_PAYMENT_HISTORY_EMPTY, show_alert=True)
+        await safe_callback_answer(callback, PAYMENT_HISTORY_EMPTY, show_alert=True)
         return
 
-    text = f"{DEBT_PAYMENT_HISTORY_TITLE} - طلب #{txn_id}\n\n"
+    text = f"{PAYMENT_HISTORY_TITLE} - طلب #{txn_id}\n\n"
     total_paid = 0
     for p in payments:
         total_paid += p["amount"]
@@ -4207,13 +4289,18 @@ async def receivable_payment_history(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_detail:"))
 async def receivable_customer_detail(callback: CallbackQuery):
     """Show detailed receivables for a selected customer with item-level and group-level actions."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4241,14 +4328,16 @@ async def receivable_customer_detail(callback: CallbackQuery):
 
     # Group-level: pay entire customer ledger
     if has_active:
+        short_id = await _register_callback_data(cache_key, safe_party)
         builder.row(InlineKeyboardButton(
             text=f"💵 دریافت از {group['party']}",
-            callback_data=f"recv_pay_customer:{cache_key}:{safe_party}"
+            callback_data=f"recv_pay_customer:{short_id}"
         ))
 
     # Group-level: SMS
     if has_pay_info:
-        builder.row(InlineKeyboardButton(text="📩 پیامک همه", callback_data=f"recv_group_sms:{cache_key}:{safe_party}"))
+        short_id = await _register_callback_data(cache_key, safe_party)
+        builder.row(InlineKeyboardButton(text="📩 پیامک همه", callback_data=f"recv_group_sms:{short_id}"))
 
     # Item-level: individual payment (advanced mode)
     active_txns = [t for t in group["txns"] if not t["is_settled"]]
@@ -4270,13 +4359,18 @@ async def receivable_group_back(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_group_sms:"))
 async def receivable_group_sms(callback: CallbackQuery):
     """Send SMS info for all receivables of a customer."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4306,22 +4400,22 @@ async def receivable_group_sms(callback: CallbackQuery):
         return
 
     party = group["party"]
-    amount_fmt = format_amount(group["remaining"])
+    amount_fmt = format_amount_for_sms(group["remaining"])
     amount_words = amount_to_persian_words(group["remaining"])
 
     lines = []
-    if txn_with_info.card_number:
-        card_fmt = " ".join([txn_with_info.card_number[i:i+4] for i in range(0, 16, 4)])
+    if txn_with_info["card_number"]:
+        card_fmt = " ".join([txn_with_info["card_number"][i:i+4] for i in range(0, 16, 4)])
         lines.append("کارت:")
         lines.append(card_fmt)
         lines.append("")
-    if txn_with_info.sheba:
+    if txn_with_info["sheba"]:
         lines.append("شبا:")
-        lines.append(txn_with_info.sheba)
+        lines.append(txn_with_info["sheba"])
         lines.append("")
     lines.append(party)
-    if txn_with_info.bank_name:
-        lines.append(f"بانک: {normalize_bank_name(txn_with_info.bank_name)}")
+    if txn_with_info["bank_name"]:
+        lines.append(f"بانک: {normalize_bank_name(txn_with_info['bank_name'])}")
     lines.append(f"{amount_fmt} تومان")
     lines.append(amount_words)
 
@@ -4335,13 +4429,18 @@ async def receivable_group_sms(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_group_pay:"))
 async def receivable_group_pay(callback: CallbackQuery, state: FSMContext):
     """Start customer-level payment flow - show customer ledger and prompt for amount."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4396,13 +4495,18 @@ async def receivable_group_pay(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("recv_pay_customer:"))
 async def recv_pay_customer_start(callback: CallbackQuery, state: FSMContext):
     """Start customer-level payment from detail view."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4624,13 +4728,13 @@ async def receivable_settled_sub_selected(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("rs_cust:"))
 async def receivable_settled_customer_selected(callback: CallbackQuery):
     """Show list of settled receivables for a selected customer."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4789,9 +4893,11 @@ async def receivable_settled_item_detail(callback: CallbackQuery):
             if cache_key:
                 break
 
+    back_short_id = await _register_callback_data(cache_key, safe_party)
     await callback.message.edit_text(
         text,
-        reply_markup=settled_recv_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, has_payment_photo)
+        reply_markup=settled_recv_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, has_payment_photo,
+                                                  back_callback=f"rs_bi:{back_short_id}")
     )
     await safe_callback_answer(callback)
 
@@ -4843,9 +4949,10 @@ async def receivable_settled_back_to_customers(callback: CallbackQuery):
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"rs_cust:{cache_key}:{safe_key}"
+            "callback_data": f"rs_cust:{short_id}"
         })
 
     await callback.message.edit_text(summary)
@@ -4858,13 +4965,19 @@ async def receivable_settled_back_to_customers(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("rs_bi:"))
 async def receivable_settled_back_to_items(callback: CallbackQuery):
     """Navigate back from detail to receivable list."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _recv_groups_lock:
         cached = _recv_groups_cache.get(cache_key)
@@ -4928,13 +5041,13 @@ async def receivable_settled_back_to_items(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("ds_cust:"))
 async def debt_settled_customer_selected(callback: CallbackQuery):
     """Show list of settled debts for a selected customer."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    cache_key, safe_party, _ = lookup_result
 
     async with _debt_groups_lock:
         cached = _debt_groups_cache.get(cache_key)
@@ -5096,9 +5209,11 @@ async def debt_settled_item_detail(callback: CallbackQuery):
             if cache_key:
                 break
 
+    back_short_id = await _register_callback_data(cache_key, safe_party)
     await callback.message.edit_text(
         text,
-        reply_markup=settled_debt_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, has_payment_photo)
+        reply_markup=settled_debt_detail_keyboard(txn["id"], cache_key, safe_party, has_photo, has_payment_photo,
+                                                  back_callback=f"ds_bi:{back_short_id}")
     )
     await safe_callback_answer(callback)
 
@@ -5150,9 +5265,10 @@ async def debt_settled_back_to_customers(callback: CallbackQuery):
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"ds_cust:{cache_key}:{safe_key}"
+            "callback_data": f"ds_cust:{short_id}"
         })
 
     await callback.message.edit_text(summary)
@@ -5166,13 +5282,19 @@ async def debt_settled_back_to_customers(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("ds_bi:"))
 async def debt_settled_back_to_items(callback: CallbackQuery):
     """Navigate back from detail to debt list."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    cache_key, safe_party, _ = lookup_result
 
     async with _debt_groups_lock:
         cached = _debt_groups_cache.get(cache_key)
@@ -5312,9 +5434,10 @@ async def settlement_debt_list(callback: CallbackQuery):
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"stl_cust:{cache_key}:{safe_key}"
+            "callback_data": f"stl_cust:{short_id}"
         })
 
     await callback.message.answer(
@@ -5376,9 +5499,10 @@ async def settlement_recv_list(callback: CallbackQuery):
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"stl_cust:{cache_key}:{safe_key}"
+            "callback_data": f"stl_cust:{short_id}"
         })
 
     await callback.message.answer(
@@ -5391,13 +5515,13 @@ async def settlement_recv_list(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("stl_cust:"))
 async def settlement_customer_selected(callback: CallbackQuery):
     """Show list of settlement items for a selected customer."""
-    parts = callback.data.split(":", 2)
-    if len(parts) < 3:
-        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_party = parts[2]
+    cache_key, safe_party, _ = lookup_result
 
     async with _settlement_groups_lock:
         cached = _settlement_groups_cache.get(cache_key)
@@ -5625,9 +5749,10 @@ async def settlement_back_to_customers(callback: CallbackQuery):
         else:
             label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"stl_cust:{cache_key}:{safe_key}"
+            "callback_data": f"stl_cust:{short_id}"
         })
 
     back_cb = "debt_settled_cat" if txn_type == "debt" else "receivable_settled_cat"
@@ -6423,7 +6548,7 @@ async def payment_sms_callback(callback: CallbackQuery):
             return
 
         party = txn["party_name"] or "-"
-        amount_fmt = format_amount(txn["amount"])
+        amount_fmt = format_amount_for_sms(txn["amount"])
         amount_words = amount_to_persian_words(txn["amount"])
 
         lines = []
@@ -6441,7 +6566,7 @@ async def payment_sms_callback(callback: CallbackQuery):
 
         lines.append(party)
         if txn["bank_name"]:
-            lines.append(f"بانک: {normalize_bank_name(txn["bank_name"])}")
+            lines.append(f"بانک: {normalize_bank_name(txn['bank_name'])}")
         lines.append(f"{amount_fmt} تومان")
         lines.append(amount_words)
 
@@ -7399,8 +7524,8 @@ def _build_card_group_summary_text(groups: list, title: str) -> str:
     for g in groups:
         text += f"\n\n👤 {g['name']}"
         text += f"\n   📋 {g['count']} کارت/شبا"
-        has_card = any(c.card_number for c in g["cards"])
-        has_sheba = any(c.sheba for c in g["cards"])
+        has_card = any(c["card_number"] for c in g["cards"])
+        has_sheba = any(c["sheba"] for c in g["cards"])
         parts = []
         if has_card:
             parts.append("کارت")
@@ -7557,11 +7682,11 @@ def _group_cards_by_owner_filtered(cards: list, sort_by: str = "count", filter_b
     # Apply filter
     filtered_cards = cards
     if filter_by == "has_card":
-        filtered_cards = [c for c in cards if c.card_number]
+        filtered_cards = [c for c in cards if c["card_number"]]
     elif filter_by == "has_sheba":
-        filtered_cards = [c for c in cards if c.sheba]
+        filtered_cards = [c for c in cards if c["sheba"]]
     elif filter_by == "both":
-        filtered_cards = [c for c in cards if c.card_number and c.sheba]
+        filtered_cards = [c for c in cards if c["card_number"] and c["sheba"]]
 
     # Group
     groups = _group_cards_by_owner(filtered_cards)
@@ -7574,14 +7699,14 @@ def _group_cards_by_owner_filtered(cards: list, sort_by: str = "count", filter_b
     elif sort_by == "bank":
         # Sort by most common bank in group
         def get_bank(g):
-            banks = [c.bank_name for c in g["cards"] if c.bank_name]
+            banks = [c["bank_name"] for c in g["cards"] if c["bank_name"]]
             return banks[0] if banks else "zzz"
         groups.sort(key=get_bank)
     elif sort_by == "date":
         # Sort by most recent card
         def get_date(g):
-            dates = [c.created_at for c in g["cards"] if c.created_at]
-            return max(dates) if dates else g["cards"][0].created_at or datetime.min
+            dates = [c["created_at"] for c in g["cards"] if c["created_at"]]
+            return max(dates) if dates else g["cards"][0]["created_at"] or datetime.min
         groups.sort(key=get_date, reverse=True)
 
     return groups
@@ -7839,12 +7964,12 @@ async def card_reports_callback(callback: CallbackQuery):
         cards = CardInfoRepository.get_by_user(user["id"])
 
         total = len(cards)
-        with_card = sum(1 for c in cards if c.card_number)
-        with_sheba = sum(1 for c in cards if c.sheba)
-        owners = len(set(c.name for c in cards if c.name))
+        with_card = sum(1 for c in cards if c["card_number"])
+        with_sheba = sum(1 for c in cards if c["sheba"])
+        owners = len(set(c["name"] for c in cards if c["name"]))
 
         # Get unique bank names
-        banks = list({normalize_bank_name(c.bank_name) for c in cards if c.bank_name})
+        banks = list({normalize_bank_name(c["bank_name"]) for c in cards if c["bank_name"]})
 
         text = f"""📊 گزارش کارت‌ها
 
@@ -8291,7 +8416,7 @@ async def sheba_handler(message: Message, state: FSMContext):
     # Move to bank name
     user = get_user(message)
     cards = CardInfoRepository.get_by_user(user["id"])
-    bank_names = list({c.bank_name for c in cards if c.bank_name})
+    bank_names = list({c["bank_name"] for c in cards if c["bank_name"]})
     await state.set_state(CardForm.bank_name)
     await message.answer(BANK_NAME_SELECT_PROMPT, reply_markup=bank_name_select_keyboard(bank_names))
 
@@ -8947,8 +9072,9 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
 
         type_label = "بدهی" if action == "debt_sms" else "طلب"
         party = txn["party_name"] or "-"
-        amount_fmt = format_amount(txn["amount"])
-        amount_words = amount_to_persian_words(txn["amount"])
+        remaining = PaymentRepository.get_remaining(txn_id, txn["amount"]) if not txn["is_settled"] else txn["amount"]
+        amount_fmt = format_amount_for_sms(remaining)
+        amount_words = amount_to_persian_words(remaining)
 
         lines = []
 
@@ -8968,7 +9094,7 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
         # Name, Bank, Amount
         lines.append(party)
         if txn["bank_name"]:
-            lines.append(f"بانک: {normalize_bank_name(txn["bank_name"])}")
+            lines.append(f"بانک: {normalize_bank_name(txn['bank_name'])}")
         lines.append(f"{amount_fmt} تومان")
         lines.append(amount_words)
 

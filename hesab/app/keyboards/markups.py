@@ -809,7 +809,8 @@ def debt_customer_debts_keyboard(txns_data: list, back_callback: str = "debt_gro
 def debt_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
                           has_photo: bool = False, remaining: float = None,
                           has_payment_info: bool = False,
-                          has_payment_photo: bool = False) -> InlineKeyboardMarkup:
+                          has_payment_photo: bool = False,
+                          back_callback: str = None) -> InlineKeyboardMarkup:
     """Keyboard for individual debt detail view with all actions."""
     builder = InlineKeyboardBuilder()
     buttons = []
@@ -830,8 +831,10 @@ def debt_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
     builder.row(
         InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"debt_payment_history:{txn_id}")
     )
+    if back_callback is None:
+        back_callback = f"debt_detail_back:{cache_key}:{safe_party}"
     builder.row(
-        InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"debt_detail_back:{cache_key}:{safe_party}")
+        InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_callback)
     )
     return builder.as_markup()
 
@@ -854,7 +857,8 @@ def debt_list_keyboard(txn_id: int, has_photo: bool = False, remaining: float = 
 
 def recv_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
                           has_photo: bool = False, remaining: float = None,
-                          has_payment_info: bool = False) -> InlineKeyboardMarkup:
+                          has_payment_info: bool = False,
+                          back_callback: str = None) -> InlineKeyboardMarkup:
     """Keyboard for individual receivable detail view with all actions."""
     builder = InlineKeyboardBuilder()
     buttons = []
@@ -873,8 +877,10 @@ def recv_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
     builder.row(
         InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"receivable_payment_history:{txn_id}")
     )
+    if back_callback is None:
+        back_callback = f"recv_detail_back:{cache_key}:{safe_party}"
     builder.row(
-        InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"recv_detail_back:{cache_key}:{safe_party}")
+        InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_callback)
     )
     return builder.as_markup()
 
@@ -960,7 +966,7 @@ def settled_recv_items_keyboard(items_data: list, cache_key: str) -> InlineKeybo
     return builder.as_markup()
 
 
-def settled_recv_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, has_photo: bool = False, has_payment_photo: bool = False) -> InlineKeyboardMarkup:
+def settled_recv_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, has_photo: bool = False, has_payment_photo: bool = False, back_callback: str = None) -> InlineKeyboardMarkup:
     """Keyboard for settled receivable detail view."""
     builder = InlineKeyboardBuilder()
     buttons = []
@@ -971,7 +977,9 @@ def settled_recv_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, h
     if buttons:
         builder.row(*buttons)
     builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"receivable_payment_history:{txn_id}"))
-    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"rs_bi:{cache_key}:{safe_party}"))
+    if back_callback is None:
+        back_callback = f"rs_bi:{cache_key}:{safe_party}"
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=back_callback))
     return builder.as_markup()
 
 
@@ -996,7 +1004,7 @@ def settled_debt_items_keyboard(items_data: list, cache_key: str) -> InlineKeybo
     return builder.as_markup()
 
 
-def settled_debt_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, has_photo: bool = False, has_payment_photo: bool = False) -> InlineKeyboardMarkup:
+def settled_debt_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, has_photo: bool = False, has_payment_photo: bool = False, back_callback: str = None) -> InlineKeyboardMarkup:
     """Keyboard for settled debt detail view."""
     builder = InlineKeyboardBuilder()
     buttons = []
@@ -1007,7 +1015,9 @@ def settled_debt_detail_keyboard(txn_id: int, cache_key: str, safe_party: str, h
     if buttons:
         builder.row(*buttons)
     builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"debt_payment_history:{txn_id}"))
-    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"ds_bi:{cache_key}:{safe_party}"))
+    if back_callback is None:
+        back_callback = f"ds_bi:{cache_key}:{safe_party}"
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=back_callback))
     return builder.as_markup()
 
 
