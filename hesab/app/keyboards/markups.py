@@ -619,8 +619,6 @@ def card_linked_txn_keyboard(card_id: int, txn_type: str, cache_key: str = None,
     """Keyboard for viewing linked transactions from card detail."""
     builder = InlineKeyboardBuilder()
     back_cb = f"card_back_from_linked:{card_id}"
-    if cache_key and safe_name:
-        back_cb = f"card_back_from_linked:{card_id}:{cache_key}:{safe_name}"
     builder.row(
         InlineKeyboardButton(text="🔙 بازگشت به کارت", callback_data=back_cb)
     )
@@ -648,6 +646,7 @@ def card_items_keyboard(items_data: list, cache_key: str) -> InlineKeyboardMarku
 
 
 def card_detail_keyboard(card_id: int, cache_key: str = None, safe_name: str = None,
+                         back_short_id: str = None, linked_short_id: str = None,
                          debt_count: int = 0, recv_count: int = 0, payment_count: int = 0) -> InlineKeyboardMarkup:
     """Keyboard for individual card detail view with all actions."""
     builder = InlineKeyboardBuilder()
@@ -659,7 +658,7 @@ def card_detail_keyboard(card_id: int, cache_key: str = None, safe_name: str = N
         InlineKeyboardButton(text="📩 ارسال پیامک", callback_data=f"copy_sms:{card_id}"),
     )
     # Build context suffix for linked transaction callbacks
-    ctx = f":{cache_key}:{safe_name}" if cache_key and safe_name else ""
+    ctx = f":{linked_short_id}" if linked_short_id else ""
     # Linked transaction buttons
     linked_buttons = []
     if debt_count > 0:
@@ -676,9 +675,9 @@ def card_detail_keyboard(card_id: int, cache_key: str = None, safe_name: str = N
         InlineKeyboardButton(text="✏️ ویرایش", callback_data=f"card_edit:{card_id}"),
         InlineKeyboardButton(text="🗑 حذف", callback_data=f"card_delete:{card_id}")
     )
-    if cache_key and safe_name:
+    if back_short_id:
         builder.row(
-            InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"card_detail_back:{cache_key}:{safe_name}")
+            InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"card_detail_back:{back_short_id}")
         )
     else:
         builder.row(

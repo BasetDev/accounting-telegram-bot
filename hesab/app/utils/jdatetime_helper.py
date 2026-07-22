@@ -2,7 +2,7 @@
 
 import jdatetime
 from pytz import timezone
-from datetime import datetime as dt
+from datetime import datetime as dt, timezone as dt_timezone
 
 from app.config import settings
 
@@ -25,7 +25,7 @@ DAYS_FA = [
 
 def get_now_jalali() -> jdatetime.datetime:
     """Get current time in Iran timezone as Jalali datetime."""
-    utc_now = dt.utcnow()
+    utc_now = dt.now(dt_timezone.utc)
     iran_now = utc_now.replace(tzinfo=timezone("UTC")).astimezone(IRAN_TZ)
     return jdatetime.datetime.fromgregorian(
         year=iran_now.year,

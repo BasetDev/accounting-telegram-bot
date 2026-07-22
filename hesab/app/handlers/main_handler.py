@@ -4405,7 +4405,7 @@ async def receivable_group_sms(callback: CallbackQuery):
 
     lines = []
     if txn_with_info["card_number"]:
-        card_fmt = " ".join([txn_with_info["card_number"][i:i+4] for i in range(0, 16, 4)])
+        card_fmt = " ".join([txn_with_info["card_number"][i:i+4] for i in range(0, len(txn_with_info["card_number"]), 4)])
         lines.append("کارت:")
         lines.append(card_fmt)
         lines.append("")
@@ -6554,7 +6554,7 @@ async def payment_sms_callback(callback: CallbackQuery):
         lines = []
 
         if txn["card_number"]:
-            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, len(txn["card_number"]), 4)])
             lines.append("کارت:")
             lines.append(card_fmt)
             lines.append("")
@@ -7756,9 +7756,10 @@ async def card_all_callback(callback: CallbackQuery):
         for g in groups:
             label = f"👤 {g['name']} | {g['count']} کارت"
             safe_name = g["name"].replace(":", "_").replace(" ", "_")
+            short_id = await _register_callback_data(cache_key, safe_name)
             buttons_data.append({
                 "label": label,
-                "callback_data": f"card_cust_detail:{cache_key}:{safe_name}"
+                "callback_data": f"card_cust_detail:{short_id}"
             })
 
         await callback.message.edit_text(text, reply_markup=card_owner_overview_keyboard(buttons_data, cache_key))
@@ -7770,13 +7771,17 @@ async def card_all_callback(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("card_cust_detail:"))
 async def card_cust_detail_callback(callback: CallbackQuery):
     """Show cards for a specific customer/name."""
-    parts = callback.data.split(":")
-    if len(parts) < 3:
+    short_id = callback.data.split(":")[1] if ":" in callback.data else None
+    if not short_id:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_name = parts[2]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات منقضی شده.", show_alert=True)
+        return
+
+    cache_key, safe_name, _ = lookup_result
 
     # Find the group in cache
     async with _card_groups_lock:
@@ -7807,9 +7812,10 @@ async def card_cust_detail_callback(callback: CallbackQuery):
             label += f" | {card["card_number"][-4:]}****"
         if card["sheba"]:
             label += f" | IR{card["sheba"][-4:]}****"
+        detail_short_id = await _register_callback_data(cache_key, safe_name, str(card["id"]))
         items_data.append({
             "label": label,
-            "detail_callback": f"card_detail:{card["id"]}:{cache_key}:{safe_name}"
+            "detail_callback": f"card_detail:{detail_short_id}"
         })
 
     await callback.message.edit_text(text, reply_markup=card_items_keyboard(items_data, cache_key))
@@ -7817,15 +7823,23 @@ async def card_cust_detail_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("card_detail:"))
 async def card_detail_callback(callback: CallbackQuery):
-    """Show full detail for a single card."""
-    parts = callback.data.split(":")
-    if len(parts) < 4:
+    """Show full detail for a single card. Format: card_detail:{short_id}"""
+    short_id = callback.data.split(":")[1] if ":" in callback.data else None
+    if not short_id:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    card_id = int(parts[1])
-    cache_key = parts[2]
-    safe_name = parts[3]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات منقضی شده.", show_alert=True)
+        return
+
+    cache_key, safe_name, extra = lookup_result
+    try:
+        card_id = int(extra)
+    except (ValueError, TypeError):
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
 
     try:
         user = UserRepository.get_by_telegram_id( callback.from_user.id)
@@ -7842,8 +7856,11 @@ async def card_detail_callback(callback: CallbackQuery):
         linked_counts = _get_card_linked_counts(user["id"], card["card_number"], card["sheba"])
 
         text = _build_card_detail_text(card)
+        back_short_id = await _register_callback_data(cache_key, safe_name) if cache_key and safe_name else None
+        linked_short_id = await _register_callback_data(cache_key, safe_name) if cache_key and safe_name else None
         keyboard = card_detail_keyboard(
             card["id"], cache_key, safe_name,
+            back_short_id=back_short_id, linked_short_id=linked_short_id,
             debt_count=linked_counts["debt"],
             recv_count=linked_counts["recv"],
             payment_count=linked_counts["payment"]
@@ -7890,9 +7907,10 @@ async def card_back_callback(callback: CallbackQuery):
     for name, g in groups.items():
         label = f"👤 {name} | {g['count']} کارت"
         safe_name = name.replace(":", "_").replace(" ", "_")
+        short_id = await _register_callback_data(cache_key, safe_name)
         buttons_data.append({
             "label": label,
-            "callback_data": f"card_cust_detail:{cache_key}:{safe_name}"
+            "callback_data": f"card_cust_detail:{short_id}"
         })
 
     await callback.message.edit_text(text, reply_markup=card_owner_overview_keyboard(buttons_data, cache_key))
@@ -7900,14 +7918,18 @@ async def card_back_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("card_detail_back:"))
 async def card_detail_back_callback(callback: CallbackQuery):
-    """Back to card items list from card detail."""
-    parts = callback.data.split(":")
-    if len(parts) < 3:
+    """Back to card items list from card detail. Format: card_detail_back:{short_id}"""
+    short_id = callback.data.split(":")[1] if ":" in callback.data else None
+    if not short_id:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
 
-    cache_key = parts[1]
-    safe_name = parts[2]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات منقضی شده.", show_alert=True)
+        return
+
+    cache_key, safe_name, _ = lookup_result
 
     async with _card_groups_lock:
         groups = _card_groups_cache.get(cache_key)
@@ -7936,9 +7958,10 @@ async def card_detail_back_callback(callback: CallbackQuery):
             label += f" | {card["card_number"][-4:]}****"
         if card["sheba"]:
             label += f" | IR{card["sheba"][-4:]}****"
+        detail_short_id = await _register_callback_data(cache_key, safe_name, str(card["id"]))
         items_data.append({
             "label": label,
-            "detail_callback": f"card_detail:{card["id"]}:{cache_key}:{safe_name}"
+            "detail_callback": f"card_detail:{detail_short_id}"
         })
 
     await callback.message.edit_text(text, reply_markup=card_items_keyboard(items_data, cache_key))
@@ -8048,9 +8071,10 @@ async def card_sort_callback(callback: CallbackQuery):
         for g in groups:
             label = f"👤 {g['name']} | {g['count']} کارت"
             safe_name = g["name"].replace(":", "_").replace(" ", "_")
+            short_id = await _register_callback_data(new_cache_key, safe_name)
             buttons_data.append({
                 "label": label,
-                "callback_data": f"card_cust_detail:{new_cache_key}:{safe_name}"
+                "callback_data": f"card_cust_detail:{short_id}"
             })
 
         await callback.message.edit_text(text, reply_markup=card_owner_overview_keyboard(buttons_data, new_cache_key))
@@ -8101,9 +8125,10 @@ async def card_filter_callback(callback: CallbackQuery):
         for g in groups:
             label = f"👤 {g['name']} | {g['count']} کارت"
             safe_name = g["name"].replace(":", "_").replace(" ", "_")
+            short_id = await _register_callback_data(new_cache_key, safe_name)
             buttons_data.append({
                 "label": label,
-                "callback_data": f"card_cust_detail:{new_cache_key}:{safe_name}"
+                "callback_data": f"card_cust_detail:{short_id}"
             })
 
         if not buttons_data:
@@ -8242,15 +8267,11 @@ async def card_linked_pay_callback(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("card_back_from_linked:"))
 async def card_back_from_linked_callback(callback: CallbackQuery):
-    """Back to card detail from linked transactions view. Format: card_back_from_linked:{card_id} or card_back_from_linked:{card_id}:{cache_key}:{safe_name}"""
-    parts = callback.data.split(":")
+    """Back to card detail from linked transactions view. Format: card_back_from_linked:{card_id}"""
     card_id = safe_parse_callback_id(callback, 1)
     if card_id is None:
         await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
         return
-
-    cache_key = parts[2] if len(parts) > 2 else None
-    safe_name = parts[3] if len(parts) > 3 else None
 
     try:
         user = UserRepository.get_by_telegram_id( callback.from_user.id)
@@ -8268,7 +8289,7 @@ async def card_back_from_linked_callback(callback: CallbackQuery):
 
         text = _build_card_detail_text(card)
         keyboard = card_detail_keyboard(
-            card["id"], cache_key, safe_name,
+            card["id"],
             debt_count=linked_counts["debt"],
             recv_count=linked_counts["recv"],
             payment_count=linked_counts["payment"]
@@ -8565,9 +8586,10 @@ async def card_list(message: Message):
         for g in groups:
             label = f"👤 {g['name']} | {g['count']} کارت"
             safe_name = g["name"].replace(":", "_").replace(" ", "_")
+            short_id = await _register_callback_data(cache_key, safe_name)
             buttons_data.append({
                 "label": label,
-                "callback_data": f"card_cust_detail:{cache_key}:{safe_name}"
+                "callback_data": f"card_cust_detail:{short_id}"
             })
         
         await message.answer(text, reply_markup=card_owner_overview_keyboard(buttons_data, cache_key))
@@ -8615,9 +8637,10 @@ async def card_search_result(message: Message, state: FSMContext):
         for g in groups:
             label = f"👤 {g['name']} | {g['count']} کارت"
             safe_name = g["name"].replace(":", "_").replace(" ", "_")
+            short_id = await _register_callback_data(cache_key, safe_name)
             buttons_data.append({
                 "label": label,
-                "callback_data": f"card_cust_detail:{cache_key}:{safe_name}"
+                "callback_data": f"card_cust_detail:{short_id}"
             })
         
         await message.answer(text, reply_markup=card_owner_overview_keyboard(buttons_data, cache_key))
@@ -9080,7 +9103,7 @@ async def txn_sms_copy_callback(callback: CallbackQuery):
 
         # Card number (first)
         if txn["card_number"]:
-            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+            card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, len(txn["card_number"]), 4)])
             lines.append("کارت:")
             lines.append(card_fmt)
             lines.append("")
