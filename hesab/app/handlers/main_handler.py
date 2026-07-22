@@ -3516,7 +3516,7 @@ async def debt_customer_detail(callback: CallbackQuery):
         short_id = await _register_callback_data(cache_key, safe_party, str(txn["id"]))
         txns_data.append({
             "label": label,
-            "callback_data": f"debt_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
+            "callback_data": f"debt_item_detail:{short_id}"
         })
 
     await callback.message.answer(
