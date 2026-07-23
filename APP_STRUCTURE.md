@@ -1,7 +1,67 @@
 # Application Navigation Structure
 
 ```
-🤖 BOT ENTRY POINTS
+══════════════════════════════════════════════════════════════
+PROJECT STRUCTURE
+══════════════════════════════════════════════════════════════
+
+hesab/
+├── main.py                          # Entry point (aiogram 3.x polling)
+├── .env                             # Configuration (BOT_TOKEN, MONGO_URI, etc.)
+├── APP_STRUCTURE.md                 # This file
+├── hesab/
+│   ├── app/
+│   │   ├── config.py                # Settings (env vars, paths)
+│   │   ├── database/
+│   │   │   ├── models.py            # MongoDB connection, collections, indexes
+│   │   │   └── repository.py        # Repository pattern (User, Transaction, Payment, Customer, Card, Reminder, Backup)
+│   │   ├── handlers/
+│   │   │   └── main_handler.py      # All handlers (~10,000 lines, single router)
+│   │   ├── keyboards/
+│   │   │   └── markups.py           # All keyboards (Inline + Reply)
+│   │   ├── services/
+│   │   │   └── export_service.py    # Excel/PDF export (openpyxl, reportlab)
+│   │   ├── utils/
+│   │   │   ├── messages.py          # All message templates
+│   │   │   ├── logger.py            # Logging
+│   │   │   └── jdatetime_helper.py  # Jalali date utilities
+│   │   └── middleware/
+│   │       └── (logging middleware in main_handler.py)
+│   ├── uploads/                     # Photo attachments
+│   ├── exports/                     # Generated Excel/PDF files
+│   ├── backups/                     # Database backups (.db files)
+│   ├── logs/                        # Log files
+│   └── data/                        # Local data (if any)
+├── test_hierarchy.py                # Test script for debt/receivable hierarchy
+└── start_bot.sh                     # Bot startup script
+
+══════════════════════════════════════════════════════════════
+TECH STACK
+══════════════════════════════════════════════════════════════
+
+- Framework: aiogram 3.x (async, Router-based)
+- Database: MongoDB (pymongo, Atlas or local)
+- Date: jdatetime (Jalali/Persian calendar)
+- Export: openpyxl (Excel), reportlab (PDF)
+- FSM: aiogram FSM (MemoryStorage)
+
+══════════════════════════════════════════════════════════════
+MONGODB COLLECTIONS
+══════════════════════════════════════════════════════════════
+
+- users              → User profiles (telegram_id, username, etc.)
+- transactions       → All financial transactions (income, expense, debt, receivable)
+- payments           → Payment records (debt_payment, receivable_payment)
+- customers          → Customer database (name, phone, address, notes)
+- card_infos         → Card/IBAN information (card_number, sheba, bank_name)
+- reminders          → Due date reminders
+- backups            → Backup metadata
+
+══════════════════════════════════════════════════════════════
+BOT ENTRY POINTS
+══════════════════════════════════════════════════════════════
+
+🤖 COMMANDS
 ├── /start                    → WELCOME message → Main Menu
 ├── /menu                     → Main Menu
 ├── /help                     → HELP message → Main Menu
@@ -74,17 +134,19 @@
 │
 ├── 💳 بدهی‌ها (Debts) ────────────────────────────────────── [Debt Submenu - Inline]
 │   │
-│   │  ┌─ Debt Submenu (InlineKeyboardMarkup) ─────────────┐
-│   ├──┤  🟡 بدهی‌های فعال     [debt_active]                │
-│   │  │  🔴 سررسید گذشته      [debt_overdue]               │
-│   │  │  🟢 تسویه شده         [debt_settled_cat]           │
-│   │  │  ⏰ سررسید امروز      [debt_due_today]             │
-│   │  │  📅 سررسید این هفته   [debt_due_week]              │
-│   │  │  📋 همه بدهی‌ها        [debt_all_cat]               │
-│   │  │  💳 پرداخت بدهی       [debt_pay_cat]               │
-│   │  │  📊 گزارش بدهی‌ها      [debt_reports]               │
-│   │  │  📋 ثبت بدهی جدید     [debt_register]              │
-│   │  └────────────────────────────────────────────────────┘
+│   │  ┌─ Debt Submenu (InlineKeyboardMarkup) ─────────────────────┐
+│   ├──┤  🟡 بدهی‌های فعال         [debt_active]                    │
+│   │  │  🔴 سررسید گذشته          [debt_overdue]                   │
+│   │  │  🟢 تسویه شده             [debt_settled_cat]               │
+│   │  │  ⏰ سررسید امروز          [debt_due_today]                 │
+│   │  │  📅 سررسید این هفته       [debt_due_week]                  │
+│   │  │  📋 همه بدهی‌ها            [debt_all_cat]                   │
+│   │  │  💳 پرداخت بدهی           [debt_pay_cat]                   │
+│   │  │  📊 تسویه‌ها               [settlement_debt]                │
+│   │  │  📜 پرداخت‌های انجام شده   [debt_view_payments]            │
+│   │  │  📊 گزارش بدهی‌ها          [debt_reports]                   │
+│   │  │  📋 ثبت بدهی جدید         [debt_register]                  │
+│   │  └────────────────────────────────────────────────────────────┘
 │   │
 │   ├── 🟡 بدهی‌های فعال → 3-level hierarchical view:
 │   │   │
@@ -184,7 +246,63 @@
 │   │   ├── سایر                   [debt_pay_cat:سایر] → Payment Selection List
 │   │   └── [🔙 بازگشت]           → Debt Submenu
 │   │
-│   ├── 📊 گزارش بدهی‌ها → Summary report text → Debt Submenu
+│   ├── 📊 تسویه‌ها → Settlement view (inline) ── [settlement_debt]
+│   │   ├── Level 1 — Customer Overview
+│   │   │   ├── Summary (total amount, total paid, remaining, settlement rate)
+│   │   │   ├── 👤 {party} | {paid}/{total} تومان ({pct}%)  [stl_cust:{short_id}]  (per customer)
+│   │   │   └── [🔙 بازگشت]  [debt_view_payments] → Debt Submenu
+│   │   ├── Level 2 — Customer Settlement List
+│   │   │   ├── Customer summary
+│   │   │   ├── 🟢/🟡 #{id} | {paid} از {total} تومان ({pct}%)  [stl_item:{txn_id}]  (per debt)
+│   │   │   └── [🔙 بازگشت به مشتریان]  [stl_bc:{cache_key}] → Level 1
+│   │   └── Level 3 — Settlement Detail
+│   │       ├── Full debt info + payment history
+│   │       ├── [📸 عکس] / [📸 رسید پرداخت]  (if photos exist)
+│   │       ├── [📜 تاریخچه پرداخت]
+│   │       └── [🔙 بازگشت به لیست]  [stl_bi:{cache_key}:{safe_party}] → Level 2
+│   │
+│   ├── 📜 پرداخت‌های انجام شده → 3-level payment history ── [debt_view_payments]
+│   │   ├── Level 1 — Customer List
+│   │   │   ├── Summary (total payments, payment count, customer count)
+│   │   │   ├── 👤 {party} | {total_paid} تومان ({count} پرداخت)  [dvp_cust:{short_id}]  (per customer)
+│   │   │   └── [🔙 بازگشت به منوی بدهی‌ها]  [debt_view_payments_back] → Debt Submenu
+│   │   ├── Level 2 — Customer Payment List
+│   │   │   ├── Customer summary
+│   │   │   ├── 🟢/🟡 #{txn_id} | {paid} از {total} تومان ({pct}%)  [dvp_detail:{txn_id}]  (per debt)
+│   │   │   │   └── Per-payment details (amount, date, description, photo indicator)
+│   │   │   └── [🔙 بازگشت به مشتریان]  [dvp_bc:{cache_key}] → Level 1
+│   │   └── Level 3 — Payment Detail
+│   │       ├── Full debt info + payment history
+│   │       ├── [📸 عکس] / [📸 رسید پرداخت]  (if photos exist)
+│   │       ├── [📩 پیامک]  (if payment info exists)
+│   │       ├── [📜 تاریخچه پرداخت]
+│   │       └── [🔙 بازگشت به لیست]  [dvp_bi:{cache_key}:{safe_party}] → Level 2
+│   │
+│   ├── 📊 گزارش بدهی‌ها → Reports submenu (inline) ── [debt_reports]
+│   │   │  ┌─ Debt Reports Submenu (InlineKeyboardMarkup) ────────────┐
+│   │   │  │  📊 گزارش کلی            [debt_rpt_summary]               │
+│   │   │  │  ⏳ بدهی‌های فعال        [debt_rpt_active]                │
+│   │   │  │  ✅ تسویه شده            [debt_rpt_settled]               │
+│   │   │  │  🔴 سررسید گذشته         [debt_rpt_overdue]               │
+│   │   │  │  ⏰ سررسید امروز         [debt_rpt_due_today]             │
+│   │   │  │  📅 سررسید این هفته      [debt_rpt_due_week]              │
+│   │   │  │  👥 بر اساس مشتری        [debt_rpt_by_customer]           │
+│   │   │  │  🏷 بر اساس دسته‌بندی     [debt_rpt_by_category]           │
+│   │   │  │  💰 پرداخت‌ها             [debt_rpt_payments]              │
+│   │   │  │  📊 مانده بدهی           [debt_rpt_remaining]             │
+│   │   │  │  📅 گزارش روزانه          [debt_rpt_daily]                 │
+│   │   │  │  📅 گزارش هفتگی          [debt_rpt_weekly]                │
+│   │   │  │  📅 گزارش ماهانه         [debt_rpt_monthly]               │
+│   │   │  │  📅 گزارش سالانه         [debt_rpt_yearly]                │
+│   │   │  │  🔙 بازگشت به منوی بدهی‌ها  [debt_rpt_back]               │
+│   │   │  └───────────────────────────────────────────────────────────┘
+│   │   │
+│   │   ├── Each report → Report text + Export Menu (inline)
+│   │   │   ├── 📊 Excel    [debt_rpt_export_excel:{report_type}] → file download
+│   │   │   ├── 📄 PDF      [debt_rpt_export_pdf:{report_type}]  → file download
+│   │   │   └── 🔙 بازگشت به منوی گزارش‌ها  [debt_rpt_menu] → Reports submenu
+│   │   │
+│   │   └── [🔙 بازگشت]  [debt_rpt_back] → Debt Submenu
 │   │
 │   └── 📋 ثبت بدهی جدید ───────────────────────────────── [DebtForm FSM]
 │       ├── Step 1: Category (inline)
@@ -263,17 +381,19 @@
 │
 ├── 💵 طلب‌ها (Receivables) ────────────────────────────────── [Receivable Submenu - Inline]
 │   │
-│   │  ┌─ Receivable Submenu (InlineKeyboardMarkup) ────────┐
-│   ├──┤  🟡 طلب‌های فعال       [receivable_active]          │
-│   │  │  🔴 سررسید گذشته      [receivable_overdue]         │
-│   │  │  🟢 تسویه شده         [receivable_settled_cat]     │
-│   │  │  ⏰ سررسید امروز      [receivable_due_today]       │
-│   │  │  📅 سررسید این هفته   [receivable_due_week]        │
-│   │  │  📋 همه طلب‌ها          [receivable_all_cat]         │
-│   │  │  💵 دریافت طلب        [receivable_receive_cat]     │
-│   │  │  📊 گزارش طلب‌ها        [receivable_reports]         │
-│   │  │  📌 ثبت طلب جدید       [receivable_register]        │
-│   │  └────────────────────────────────────────────────────┘
+│   │  ┌─ Receivable Submenu (InlineKeyboardMarkup) ──────────────────┐
+│   ├──┤  🟡 طلب‌های فعال           [receivable_active]                │
+│   │  │  🔴 سررسید گذشته          [receivable_overdue]               │
+│   │  │  🟢 تسویه شده             [receivable_settled_cat]           │
+│   │  │  ⏰ سررسید امروز          [receivable_due_today]             │
+│   │  │  📅 سررسید این هفته       [receivable_due_week]              │
+│   │  │  📋 همه طلب‌ها              [receivable_all_cat]               │
+│   │  │  💵 دریافت طلب            [receivable_receive_cat]           │
+│   │  │  📊 تسویه‌ها               [settlement_recv]                  │
+│   │  │  📜 دریافت‌های انجام شده   [recv_view_payments]              │
+│   │  │  📊 گزارش طلب‌ها            [receivable_reports]               │
+│   │  │  📌 ثبت طلب جدید           [receivable_register]              │
+│   │  └──────────────────────────────────────────────────────────────┘
 │   │
 │   ├── 🟡 طلب‌های فعال → Grouped by customer (inline):
 │   │   ├── Summary text (customer count, total, remaining)
@@ -323,6 +443,38 @@
 │   │   │   └── Subcategory Filter → Payment Selection List
 │   │   ├── سایر                   [recv_receive_cat:سایر]
 │   │   └── [🔙 بازگشت]           → Receivable Submenu
+│   │
+│   ├── 📊 تسویه‌ها → Settlement view (inline) ── [settlement_recv]
+│   │   ├── Level 1 — Customer Overview
+│   │   │   ├── Summary (total amount, total collected, remaining, collection rate)
+│   │   │   ├── 👤 {party} | {collected}/{total} تومان ({pct}%)  [stl_cust:{short_id}]  (per customer)
+│   │   │   └── [🔙 بازگشت]  [receivable_settled_cat] → Receivable Submenu
+│   │   ├── Level 2 — Customer Settlement List
+│   │   │   ├── Customer summary
+│   │   │   ├── 🟢/🟡 #{id} | {collected} از {total} تومان ({pct}%)  [stl_item:{txn_id}]  (per receivable)
+│   │   │   └── [🔙 بازگشت به مشتریان]  [stl_bc:{cache_key}] → Level 1
+│   │   └── Level 3 — Settlement Detail
+│   │       ├── Full receivable info + payment history
+│   │       ├── [📸 عکس] / [📸 رسید پرداخت]  (if photos exist)
+│   │       ├── [📜 تاریخچه پرداخت]
+│   │       └── [🔙 بازگشت به لیست]  [stl_bi:{cache_key}:{safe_party}] → Level 2
+│   │
+│   ├── 📜 دریافت‌های انجام شده → 3-level collection history ── [recv_view_payments]
+│   │   ├── Level 1 — Customer List
+│   │   │   ├── Summary (total collections, collection count, customer count)
+│   │   │   ├── 👤 {party} | {total_collected} تومان ({count} دریافت)  [rvp_cust:{short_id}]  (per customer)
+│   │   │   └── [🔙 بازگشت به منوی طلب‌ها]  [recv_view_payments_back] → Receivable Submenu
+│   │   ├── Level 2 — Customer Collection List
+│   │   │   ├── Customer summary
+│   │   │   ├── 🟢/🟡 #{txn_id} | {collected} از {total} تومان ({pct}%)  [rvp_detail:{txn_id}]  (per receivable)
+│   │   │   │   └── Per-collection details (amount, date, description, photo indicator)
+│   │   │   └── [🔙 بازگشت به مشتریان]  [rvp_bc:{cache_key}] → Level 1
+│   │   └── Level 3 — Collection Detail
+│   │       ├── Full receivable info + collection history
+│   │       ├── [📸 عکس] / [📸 رسید دریافت]  (if photos exist)
+│   │       ├── [📩 پیامک]  (if payment info exists)
+│   │       ├── [📜 تاریخچه دریافت]
+│   │       └── [🔙 بازگشت به لیست]  [rvp_bi:{cache_key}:{safe_party}] → Level 2
 │   │
 │   ├── 📊 گزارش طلب‌ها → Summary report text → Receivable Submenu
 │   │
@@ -534,6 +686,9 @@ SHARED INLINE ACTIONS (available on debt/receivable list items)
 📸 عکس [view_photo:{txn_id}]
     └── Displays photo attachment for transaction
 
+📸 رسید پرداخت / رسید دریافت [view_payment_photo:{txn_id}]
+    └── Displays receipt photo from payment record
+
 📩 پیامک [debt_sms:{txn_id}] / [recv_sms:{txn_id}]
     └── Formats payment info (card, sheba, bank, name, amount) as copyable text
 
@@ -565,6 +720,64 @@ SHARED INLINE ACTIONS (available on debt/receivable list items)
     └── Confirmation (inline)
         ├── ✅ تأیید  [confirm_yes] → Delete → Main Menu
         └── ❌ رد     [confirm_no]  → Cancel → Main Menu
+
+📜 تاریخچه پرداخت [debt_payment_history:{txn_id}] / [receivable_payment_history:{txn_id}]
+    └── Displays payment history for a transaction
+
+══════════════════════════════════════════════════════════════
+CACHING STRATEGY
+══════════════════════════════════════════════════════════════
+
+The bot uses in-memory caches with asyncio.Lock for thread safety:
+
+- _debt_groups_cache     → Debt active/overdue hierarchical view data
+- _recv_groups_cache     → Receivable active/overdue hierarchical view data
+- _debt_payments_cache   → Debt payments view + settlement data
+- _recv_payments_cache   → Receivable collections view + settlement data
+- _settlement_groups_cache → Settlement hierarchy data
+- _card_groups_cache     → Card hierarchy data
+- _callback_index        → Short ID → (cache_key, safe_party, extra_data) mapping
+
+Cache eviction: max 100 entries per cache, oldest removed first.
+
+══════════════════════════════════════════════════════════════
+CALLBACK NAMING CONVENTIONS
+══════════════════════════════════════════════════════════════
+
+debt_*          → Debt module
+recv_*          → Receivable module
+pay_*           → Payment flow
+edit_*          → Edit flow
+delete_*        → Delete flow
+confirm_*       → Confirmation dialogs
+view_photo:*    → Photo display
+debt_sms:*      → SMS generation
+copy_*          → Copy to clipboard
+export_*        → Excel/PDF export
+debt_rpt_*      → Debt reports
+recv_rpt_*      → Receivable reports
+stl_*           → Settlement views
+dvp_*           → Debt view payments
+rvp_*           → Receivable view payments
+debt_cust_detail:* → Debt customer detail (Level 2)
+debt_item_detail:* → Debt item detail (Level 3)
+card_*          → Card module
+search_type_*   → Search type selection
+backup_*        → Backup operations
+settlement_*    → Settlement submenu
+
+══════════════════════════════════════════════════════════════
+EXPORT ARCHITECTURE
+══════════════════════════════════════════════════════════════
+
+Export Service: hesab/app/services/export_service.py
+├── export_transactions_excel(transactions, filename) → .xlsx
+└── export_transactions_pdf(transactions, filename)   → .pdf
+
+Export triggers:
+├── Dashboard → export_excel / export_pdf (all transactions)
+├── Financial Reports → export_excel / export_pdf (period-filtered)
+└── Debt Reports → debt_rpt_export_excel:{type} / debt_rpt_export_pdf:{type}
 
 ══════════════════════════════════════════════════════════════
 CATEGORY TAXONOMY

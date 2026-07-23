@@ -1,3 +1,4 @@
 #!/bin/bash
-cd /home/bac/test/hesab
-python hesab/main.py > bot.log 2>&1
+cd "/home/bac/New folder/New/hesab"
+nohup python3 hesab/main.py > bot_output.log 2>&1 &
+echo $!

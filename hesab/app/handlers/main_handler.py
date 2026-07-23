@@ -3600,7 +3600,12 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
                 total_paid=format_amount(total_paid),
                 details="\n".join(lines)
             )
-        export_txns = all_debts
+        # For export, fetch the associated transactions
+        export_txns = []
+        for p in payments:
+            txn = TransactionRepository.get_by_id(p["transaction_id"])
+            if txn:
+                export_txns.append(txn)
 
     elif report_type == "remaining":
         remaining_debts = []
@@ -3626,6 +3631,28 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
         )
         export_txns = active
 
+    elif report_type in ("daily", "weekly", "monthly", "yearly"):
+        start, end = get_current_jalali_period(report_type)
+        date_range_txns = [t for t in all_debts if start <= (t.get("jalali_date") or "") <= end]
+        active_range = [t for t in date_range_txns if not t["is_settled"]]
+        settled_range = [t for t in date_range_txns if t["is_settled"]]
+        total_amount = sum(t["amount"] for t in date_range_txns)
+        details = _format_debt_details(date_range_txns)
+        period_name = REPORT_PERIODS.get(report_type, report_type)
+        template = {
+            "daily": DEBT_REPORT_DAILY,
+            "weekly": DEBT_REPORT_WEEKLY,
+            "monthly": DEBT_REPORT_MONTHLY,
+            "yearly": DEBT_REPORT_YEARLY,
+        }.get(report_type, DEBT_REPORT_DAILY)
+        report_text = template.format(
+            period=period_name, start=start, end=end,
+            count=len(date_range_txns), total_amount=format_amount(total_amount),
+            active_count=len(active_range), settled_count=len(settled_range),
+            details=details
+        )
+        export_txns = date_range_txns
+
     # Cache report data for export
     cache_key = f"debt_rpt_{user['id']}_{report_type}"
     async with _debt_payments_lock:
@@ -3641,11 +3668,15 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
     await safe_callback_answer(callback)
 
 
-@router.callback_query(F.data.startswith("debt_rpt_") and not F.data.startswith("debt_rpt_export_") and not F.data.startswith("debt_rpt_back") and not F.data.startswith("debt_rpt_menu"))
+@router.callback_query(
+    F.data.startswith("debt_rpt_")
+    & ~F.data.startswith("debt_rpt_export_")
+    & ~F.data.startswith("debt_rpt_back")
+    & ~F.data.startswith("debt_rpt_menu")
+)
 async def debt_report_handler(callback: CallbackQuery):
     """Handle debt report type selection."""
     report_type = callback.data.replace("debt_rpt_", "")
-    await safe_delete(callback.message)
     await _send_debt_report(callback, report_type)
 
 

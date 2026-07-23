@@ -139,6 +139,14 @@ def debt_reports_submenu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📊 مانده بدهی", callback_data="debt_rpt_remaining")
     )
     builder.row(
+        InlineKeyboardButton(text="📅 گزارش روزانه", callback_data="debt_rpt_daily"),
+        InlineKeyboardButton(text="📅 گزارش هفتگی", callback_data="debt_rpt_weekly")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📅 گزارش ماهانه", callback_data="debt_rpt_monthly"),
+        InlineKeyboardButton(text="📅 گزارش سالانه", callback_data="debt_rpt_yearly")
+    )
+    builder.row(
         InlineKeyboardButton(text="🔙 بازگشت به منوی بدهی‌ها", callback_data="debt_rpt_back")
     )
     return builder.as_markup()
