@@ -28,7 +28,7 @@ from app.keyboards.markups import (
     confirm_keyboard, due_date_keyboard, party_keyboard, export_menu, backup_menu, settings_menu,
     transaction_type_keyboard,
     debt_list_keyboard, receivable_list_keyboard, edit_field_keyboard, edit_photo_keyboard,
-    photo_skip_menu, card_skip_menu, card_menu, card_submenu, card_name_choice_keyboard,
+    photo_skip_menu, receipt_skip_menu, card_skip_menu, card_menu, card_submenu, card_name_choice_keyboard,
     card_list_keyboard, card_edit_field_keyboard,
     card_customer_keyboard, card_items_keyboard, card_detail_keyboard,
     card_sort_keyboard, card_filter_keyboard, card_owner_overview_keyboard,
@@ -57,7 +57,13 @@ from app.keyboards.markups import (
     settlement_submenu,
     settlement_customer_keyboard,
     settlement_items_keyboard,
-    settlement_detail_keyboard
+    settlement_detail_keyboard,
+    debt_payments_customer_keyboard,
+    debt_payments_detail_keyboard,
+    recv_payments_customer_keyboard,
+    recv_payments_detail_keyboard,
+    debt_reports_submenu,
+    debt_report_export_menu
 )
 from app.utils.messages import *
 from app.utils.jdatetime_helper import (
@@ -280,8 +286,7 @@ class PaymentForm(StatesGroup):
     select = State()
     payment_type = State()
     amount = State()
-    description = State()
-    photo = State()
+    receipt = State()
     confirm = State()
 
 # ==============================
@@ -2420,6 +2425,9 @@ def _build_customer_detail_text(group: dict) -> str:
             else:
                 text += f"\n   🟢 سررسید: {txn["due_jalali_date"]}{time_str} ({days_left} روز)"
         text += f"\n   📅 ثبت: {txn["jalali_date"]}"
+        p = PaymentRepository.get_by_transaction(txn["id"])
+        if p and any(pay["photo_path"] for pay in p):
+            text += f"\n   📸 رسید پرداخت: ✅ دارد"
 
     return text
 
@@ -2468,6 +2476,9 @@ def _build_txn_list_text(txns: list, txn_type: str, title: str) -> tuple:
             text += f"📝 توضیحات: {txn["description"]}\n"
         if txn["photo_path"]:
             text += f"📸 عکس: ✅ دارد\n"
+        txn_payments = PaymentRepository.get_by_transaction(txn["id"])
+        if txn_payments and any(p["photo_path"] for p in txn_payments):
+            text += f"📸 رسید پرداخت: ✅ دارد\n"
         if txn["due_jalali_date"]:
             days_left = get_days_until(txn["due_jalali_date"])
             time_str = f" ساعت {txn["due_jalali_time"]}" if txn["due_jalali_time"] else ""
@@ -3402,53 +3413,302 @@ async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "debt_reports")
 async def debt_reports(callback: CallbackQuery):
-    """Show debt summary report."""
+    """Show debt reports submenu."""
     await safe_delete(callback.message)
+    await callback.message.answer(DEBT_REPORTS_MENU, reply_markup=debt_reports_submenu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "debt_rpt_back")
+async def debt_rpt_back(callback: CallbackQuery):
+    """Back from debt reports to debt submenu."""
+    await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "debt_rpt_menu")
+async def debt_rpt_menu(callback: CallbackQuery):
+    """Return to debt reports submenu."""
+    await callback.message.edit_text(DEBT_REPORTS_MENU, reply_markup=debt_reports_submenu())
+    await safe_callback_answer(callback)
+
+
+def _get_all_debts(user_id: int) -> list:
+    """Get all debts for a user."""
+    return TransactionRepository.get_by_user(user_id, transaction_type="debt", limit=1000)
+
+
+def _format_debt_detail_line(t: dict, idx: int = None) -> str:
+    """Format a single debt detail line."""
+    prefix = f"{idx}. " if idx else ""
+    party = t.get("party_name") or "-"
+    amount = format_amount(t["amount"])
+    date = t.get("jalali_date") or "-"
+    status = "✅ تسویه" if t.get("is_settled") else "⏳ فعال"
+    return f"{prefix}👤 {party} | {amount} تومان | {date} | {status}"
+
+
+def _format_debt_details(debts: list, max_items: int = 20) -> str:
+    """Format a list of debts into detail lines."""
+    if not debts:
+        return DEBT_REPORT_EMPTY
+    lines = []
+    for i, t in enumerate(debts[:max_items], 1):
+        lines.append(_format_debt_detail_line(t, i))
+    if len(debts) > max_items:
+        lines.append(f"\n... و {len(debts) - max_items} مورد دیگر")
+    return "\n".join(lines)
+
+
+async def _send_debt_report(callback: CallbackQuery, report_type: str):
+    """Generate and send a debt report with export options."""
     user = UserRepository.get_by_telegram_id(callback.from_user.id)
     if not user:
         await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
         return
 
-    all_debts = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+    all_debts = _get_all_debts(user["id"])
     today = get_jalali_date()
 
-    total = len(all_debts)
-    total_amount = sum(t["amount"] for t in all_debts)
-
     active = [t for t in all_debts if not t["is_settled"]]
-    active_count = len(active)
-    active_amount = sum(t["amount"] for t in active)
-
     settled = [t for t in all_debts if t["is_settled"]]
-    settled_count = len(settled)
-    settled_amount = sum(t["amount"] for t in settled)
+    overdue = [t for t in active if t.get("due_jalali_date") and t["due_jalali_date"] < today]
+    due_today = [t for t in active if t.get("due_jalali_date") == today]
 
-    overdue = [t for t in active if t["due_jalali_date"] and t["due_jalali_date"] < today]
-    overdue_count = len(overdue)
-    overdue_amount = sum(t["amount"] for t in overdue)
+    from app.utils.jdatetime_helper import get_week_end_jalali
+    week_end = get_week_end_jalali()
+    due_week = [t for t in active if t.get("due_jalali_date") and today <= t["due_jalali_date"] <= week_end]
 
-    due_today = [t for t in active if t["due_jalali_date"] == today]
-    due_today_count = len(due_today)
+    report_text = ""
+    export_txns = []
 
-    # Calculate additional metrics
-    settlement_rate = (settled_count / total * 100) if total > 0 else 0
-    avg_debt = (total_amount / total) if total > 0 else 0
+    if report_type == "summary":
+        total = len(all_debts)
+        total_amount = sum(t["amount"] for t in all_debts)
+        active_amount = sum(t["amount"] for t in active)
+        settled_amount = sum(t["amount"] for t in settled)
+        overdue_amount = sum(t["amount"] for t in overdue)
+        settlement_rate = (len(settled) / total * 100) if total > 0 else 0
+        avg_debt = (total_amount / total) if total > 0 else 0
+        report_text = DEBT_REPORT_TITLE.format(
+            total=total, total_amount=format_amount(total_amount),
+            active=len(active), active_amount=format_amount(active_amount),
+            settled=len(settled), settled_amount=format_amount(settled_amount),
+            overdue=len(overdue), overdue_amount=format_amount(overdue_amount),
+            due_today=len(due_today),
+            settlement_rate=f"{settlement_rate:.1f}",
+            avg_debt=format_amount(avg_debt)
+        )
+        export_txns = all_debts
 
-    report = DEBT_REPORT_TITLE.format(
-        total=total,
-        total_amount=format_amount(total_amount),
-        active=active_count,
-        active_amount=format_amount(active_amount),
-        settled=settled_count,
-        settled_amount=format_amount(settled_amount),
-        overdue=overdue_count,
-        overdue_amount=format_amount(overdue_amount),
-        due_today=due_today_count,
-        settlement_rate=f"{settlement_rate:.1f}",
-        avg_debt=format_amount(avg_debt)
+    elif report_type == "active":
+        total_amount = sum(t["amount"] for t in active)
+        report_text = DEBT_REPORT_ACTIVE.format(
+            count=len(active), total_amount=format_amount(total_amount),
+            details=_format_debt_details(active)
+        )
+        export_txns = active
+
+    elif report_type == "settled":
+        total_amount = sum(t["amount"] for t in settled)
+        report_text = DEBT_REPORT_SETTLED.format(
+            count=len(settled), total_amount=format_amount(total_amount),
+            details=_format_debt_details(settled)
+        )
+        export_txns = settled
+
+    elif report_type == "overdue":
+        total_amount = sum(t["amount"] for t in overdue)
+        report_text = DEBT_REPORT_OVERDUE.format(
+            count=len(overdue), total_amount=format_amount(total_amount),
+            details=_format_debt_details(overdue)
+        )
+        export_txns = overdue
+
+    elif report_type == "due_today":
+        total_amount = sum(t["amount"] for t in due_today)
+        report_text = DEBT_REPORT_DUE_TODAY.format(
+            count=len(due_today), total_amount=format_amount(total_amount),
+            details=_format_debt_details(due_today)
+        )
+        export_txns = due_today
+
+    elif report_type == "due_week":
+        total_amount = sum(t["amount"] for t in due_week)
+        report_text = DEBT_REPORT_DUE_WEEK.format(
+            count=len(due_week), total_amount=format_amount(total_amount),
+            details=_format_debt_details(due_week)
+        )
+        export_txns = due_week
+
+    elif report_type == "by_customer":
+        customers = {}
+        for t in all_debts:
+            party = t.get("party_name") or "-"
+            if party not in customers:
+                customers[party] = {"count": 0, "total": 0, "remaining": 0}
+            customers[party]["count"] += 1
+            customers[party]["total"] += t["amount"]
+            if not t["is_settled"]:
+                remaining = PaymentRepository.get_remaining(t["id"], t["amount"])
+                customers[party]["remaining"] += remaining
+
+        lines = []
+        for party in sorted(customers.keys()):
+            c = customers[party]
+            status = "✅ تسویه" if c["remaining"] <= 0 else f"⏳ {format_amount(c['remaining'])} مانده"
+            lines.append(f"👤 {party}\n   📌 {c['count']} مورد | 💰 {format_amount(c['total'])} تومان | {status}")
+        report_text = DEBT_REPORT_BY_CUSTOMER.format(
+            customer_count=len(customers),
+            details="\n".join(lines) if lines else DEBT_REPORT_EMPTY
+        )
+        export_txns = all_debts
+
+    elif report_type == "by_category":
+        categories = {}
+        for t in all_debts:
+            cat = t.get("category") or "سایر"
+            if cat not in categories:
+                categories[cat] = {"count": 0, "total": 0}
+            categories[cat]["count"] += 1
+            categories[cat]["total"] += t["amount"]
+
+        lines = []
+        for cat in sorted(categories.keys()):
+            c = categories[cat]
+            lines.append(f"🏷 {cat}\n   📌 {c['count']} مورد | 💰 {format_amount(c['total'])} تومان")
+        report_text = DEBT_REPORT_BY_CATEGORY.format(
+            details="\n".join(lines) if lines else DEBT_REPORT_EMPTY
+        )
+        export_txns = all_debts
+
+    elif report_type == "payments":
+        payments = PaymentRepository.get_by_user_and_type(user["id"], "debt_payment", limit=500)
+        if not payments:
+            report_text = DEBT_REPORT_PAYMENTS.format(payment_count=0, total_paid="0", details=DEBT_REPORT_EMPTY)
+        else:
+            total_paid = sum(p["amount"] for p in payments)
+            lines = []
+            for p in payments[:20]:
+                txn = TransactionRepository.get_by_id(p["transaction_id"])
+                party = txn["party_name"] if txn else "-"
+                lines.append(f"💰 {format_amount(p['amount'])} تومان | 👤 {party} | {p['jalali_date']}")
+            if len(payments) > 20:
+                lines.append(f"\n... و {len(payments) - 20} مورد دیگر")
+            report_text = DEBT_REPORT_PAYMENTS.format(
+                payment_count=len(payments),
+                total_paid=format_amount(total_paid),
+                details="\n".join(lines)
+            )
+        export_txns = all_debts
+
+    elif report_type == "remaining":
+        remaining_debts = []
+        total_remaining = 0
+        for t in active:
+            rem = PaymentRepository.get_remaining(t["id"], t["amount"])
+            if rem > 0:
+                remaining_debts.append({**t, "_remaining": rem})
+                total_remaining += rem
+        remaining_debts.sort(key=lambda x: x["_remaining"], reverse=True)
+        total_amount = sum(t["amount"] for t in active)
+        lines = []
+        for t in remaining_debts[:20]:
+            pct = int((1 - t["_remaining"] / t["amount"]) * 100) if t["amount"] > 0 else 0
+            lines.append(f"👤 {t.get('party_name', '-')} | مانده: {format_amount(t['_remaining'])} تومان ({pct}% پرداخت شده)")
+        if len(remaining_debts) > 20:
+            lines.append(f"\n... و {len(remaining_debts) - 20} مورد دیگر")
+        report_text = DEBT_REPORT_REMAINING.format(
+            active_count=len(active),
+            total_remaining=format_amount(total_remaining),
+            total_amount=format_amount(total_amount),
+            details="\n".join(lines) if lines else DEBT_REPORT_EMPTY
+        )
+        export_txns = active
+
+    # Cache report data for export
+    cache_key = f"debt_rpt_{user['id']}_{report_type}"
+    async with _debt_payments_lock:
+        _debt_payments_cache[cache_key] = {"txns": export_txns, "report_type": report_type}
+
+    if not report_text:
+        report_text = DEBT_REPORT_EMPTY
+
+    await callback.message.edit_text(
+        report_text,
+        reply_markup=debt_report_export_menu(report_type)
     )
+    await safe_callback_answer(callback)
 
-    await callback.message.answer(report, reply_markup=debt_submenu())
+
+@router.callback_query(F.data.startswith("debt_rpt_") and not F.data.startswith("debt_rpt_export_") and not F.data.startswith("debt_rpt_back") and not F.data.startswith("debt_rpt_menu"))
+async def debt_report_handler(callback: CallbackQuery):
+    """Handle debt report type selection."""
+    report_type = callback.data.replace("debt_rpt_", "")
+    await safe_delete(callback.message)
+    await _send_debt_report(callback, report_type)
+
+
+@router.callback_query(F.data.startswith("debt_rpt_export_"))
+async def debt_report_export(callback: CallbackQuery):
+    """Handle debt report export requests."""
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    export_part = parts[0].replace("debt_rpt_export_", "")
+    report_type = parts[1]
+
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    # Get cached report data
+    cache_key = f"debt_rpt_{user['id']}_{report_type}"
+    async with _debt_payments_lock:
+        cached = _debt_payments_cache.get(cache_key)
+
+    if not cached:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    export_txns = cached.get("txns", [])
+    if not export_txns:
+        await callback.message.edit_text("📭 هیچ داده‌ای برای خروجی وجود ندارد.")
+        await safe_callback_answer(callback)
+        return
+
+    await callback.message.edit_text("⏳ در حال ایجاد فایل خروجی...")
+
+    try:
+        if export_part == "excel":
+            filepath = await export_transactions_excel(
+                export_txns,
+                filename=f"debt_report_{report_type}_{get_jalali_date().replace('/', '-')}.xlsx"
+            )
+        elif export_part == "pdf":
+            filepath = await export_transactions_pdf(
+                export_txns,
+                filename=f"debt_report_{report_type}_{get_jalali_date().replace('/', '-')}.pdf"
+            )
+        else:
+            await callback.message.edit_text(ERROR_GENERAL)
+            await safe_callback_answer(callback)
+            return
+
+        document = FSInputFile(filepath)
+        await callback.message.answer_document(
+            document,
+            caption=f"📊 گزارش بدهی ({report_type}) - {get_jalali_date()} ساعت {get_jalali_time()}"
+        )
+        await safe_delete(callback.message)
+
+    except Exception as e:
+        logger.error(f"Debt report export error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
     await safe_callback_answer(callback)
 
 # --- Debt hierarchical navigation (Level 2 & 3) ---
@@ -3919,6 +4179,780 @@ async def debt_payment_history(callback: CallbackQuery):
     await callback.message.answer(text)
     await safe_callback_answer(callback)
 
+
+# ==============================
+# Debt Payments View (3-Level)
+# ==============================
+
+@router.callback_query(F.data == "debt_view_payments")
+async def debt_view_payments_handler(callback: CallbackQuery):
+    """Level 1: Show debt payment records grouped by customer."""
+    await safe_delete(callback.message)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    payments = PaymentRepository.get_by_user_and_type(user["id"], "debt_payment", limit=100)
+    if not payments:
+        await callback.message.answer(DEBT_VIEW_PAYMENTS_EMPTY, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    txn_ids = list(set(p["transaction_id"] for p in payments))
+    txns = {}
+    for tid in txn_ids:
+        t = TransactionRepository.get_by_id(tid)
+        if t:
+            txns[tid] = t
+
+    customers: dict = {}
+    for p in payments:
+        txn = txns.get(p["transaction_id"])
+        party = txn["party_name"] if txn else "-"
+        if party not in customers:
+            customers[party] = {
+                "party": party,
+                "total_paid": 0,
+                "payment_count": 0,
+                "txn_ids": set(),
+            }
+        customers[party]["total_paid"] += p["amount"]
+        customers[party]["payment_count"] += 1
+        customers[party]["txn_ids"].add(p["transaction_id"])
+
+    cache_key = f"debt_payments_{user['id']}"
+    async with _debt_payments_lock:
+        _debt_payments_cache[cache_key] = customers
+        _evict_cache(_debt_payments_cache)
+
+    total_paid_all = sum(c["total_paid"] for c in customers.values())
+    total_payments = sum(c["payment_count"] for c in customers.values())
+    total_customers = len(customers)
+
+    text = f"{DEBT_VIEW_PAYMENTS_TITLE}\n\n"
+    text += f"💰 مجموع کل پرداخت‌ها: {format_amount(total_paid_all)} تومان\n"
+    text += f"📌 {total_payments} پرداخت | 👥 {total_customers} مشتری\n"
+    text += "────────────────────"
+
+    buttons_data = []
+    for party in sorted(customers.keys()):
+        c = customers[party]
+        safe_key = party.replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
+        label = f"👤 {c['party']} | {format_amount(c['total_paid'])} تومان ({c['payment_count']} پرداخت)"
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"dvp_cust:{short_id}"
+        })
+
+    await callback.message.answer(text)
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=debt_payments_customer_keyboard(buttons_data)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "debt_view_payments_back")
+async def debt_view_payments_back(callback: CallbackQuery):
+    """Back from level 1 to Debt Submenu."""
+    await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("dvp_cust:"))
+async def debt_payments_customer_selected(callback: CallbackQuery):
+    """Level 2: Show payments for a selected customer, grouped by debt."""
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
+
+    async with _debt_payments_lock:
+        cached = _debt_payments_cache.get(cache_key)
+    if not cached:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    customer = None
+    for party, data in cached.items():
+        if party.replace(":", "_") == safe_party:
+            customer = data
+            break
+
+    if not customer:
+        await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
+        return
+
+    all_payments = PaymentRepository.get_by_user_and_type(
+        int(cache_key.split("_")[-1]), "debt_payment", limit=200
+    )
+    cust_payments = [p for p in all_payments if p["transaction_id"] in customer["txn_ids"]]
+
+    txn_ids_in_cust = list(customer["txn_ids"])
+    txns = {}
+    for tid in txn_ids_in_cust:
+        t = TransactionRepository.get_by_id(tid)
+        if t:
+            txns[tid] = t
+
+    text = f"👤 {customer['party']}\n"
+    text += f"💰 مجموع پرداختی: {format_amount(customer['total_paid'])} تومان\n"
+    text += f"📌 {customer['payment_count']} پرداخت در {len(txn_ids_in_cust)} بدهی\n"
+    text += "——————————"
+
+    items_data = []
+    for tid in sorted(txn_ids_in_cust, reverse=True):
+        txn = txns.get(tid)
+        if not txn:
+            continue
+        txn_payments = [p for p in cust_payments if p["transaction_id"] == tid]
+        txn_paid = sum(p["amount"] for p in txn_payments)
+        txn_remaining = max(0, txn["amount"] - txn_paid)
+        txn_pct = int((txn_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+
+        if txn_remaining <= 0:
+            emoji = "🟢"
+        elif txn_paid > 0:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+
+        label = f"{emoji} #{tid} | {format_amount(txn_paid)} از {format_amount(txn['amount'])} تومان ({txn_pct}%)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"dvp_detail:{tid}",
+            "detail_callback": f"dvp_detail:{tid}"
+        })
+
+        for p in txn_payments:
+            pay_line = f"  💰 {format_amount(p['amount'])} تومان"
+            pay_line += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                pay_line += f" | {p['description']}"
+            if p["photo_path"]:
+                pay_line += f" | 📸 رسید"
+            text += f"\n{pay_line}"
+
+    party_safe = customer["party"].replace(":", "_")
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "📋 بدهی مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_items_keyboard(items_data, cache_key, back_callback="dvp_bc")
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("dvp_bc:"))
+async def debt_payments_back_to_level1(callback: CallbackQuery):
+    """Back from Level 2 to Level 1 (customer list)."""
+    cache_key = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+
+    async with _debt_payments_lock:
+        cached = _debt_payments_cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    total_paid_all = sum(c["total_paid"] for c in cached.values())
+    total_payments = sum(c["payment_count"] for c in cached.values())
+    total_customers = len(cached)
+
+    text = f"{DEBT_VIEW_PAYMENTS_TITLE}\n\n"
+    text += f"💰 مجموع کل پرداخت‌ها: {format_amount(total_paid_all)} تومان\n"
+    text += f"📌 {total_payments} پرداخت | 👥 {total_customers} مشتری\n"
+    text += "────────────────────"
+
+    buttons_data = []
+    for party in sorted(cached.keys()):
+        c = cached[party]
+        safe_key = party.replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
+        label = f"👤 {c['party']} | {format_amount(c['total_paid'])} تومان ({c['payment_count']} پرداخت)"
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"dvp_cust:{short_id}"
+        })
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=debt_payments_customer_keyboard(buttons_data)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("dvp_detail:"))
+async def debt_payments_detail(callback: CallbackQuery):
+    """Level 3: Show full details for a debt with its payments."""
+    try:
+        txn_id = int(callback.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    txn = TransactionRepository.get_by_id(txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ بدهی یافت نشد.", show_alert=True)
+        return
+
+    payments = PaymentRepository.get_by_transaction(txn["id"])
+    total_paid = sum(p["amount"] for p in payments) if payments else 0
+    remaining = max(0, txn["amount"] - total_paid)
+    is_fully_settled = txn["is_settled"] or remaining <= 0
+    percentage = int((total_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+
+    if is_fully_settled:
+        text = f"🟢 پرداخت کامل (100%)\n\n"
+    else:
+        text = f"🟡 پرداخت جزئی ({percentage}%)\n\n"
+
+    text += f"🆔 شناسه بدهی: {txn['id']}\n"
+    text += f"👤 مشتری: {txn['party_name'] or '-'}\n"
+    cat_str = txn["category"] or "-"
+    if txn["subcategory"]:
+        cat_str += f" / {txn['subcategory']}"
+    text += f"🏷 دسته‌بندی: {cat_str}\n"
+    text += f"💰 مبلغ کل بدهی: {format_amount(txn['amount'])} تومان\n"
+    text += f"💰 مجموع پرداختی: {format_amount(total_paid)} تومان\n"
+    if remaining > 0:
+        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    text += f"📊 درصد تسویه: {percentage}%\n"
+
+    if txn["due_jalali_date"]:
+        time_str = f" ساعت {txn['due_jalali_time']}" if txn["due_jalali_time"] else ""
+        text += f"📅 سررسید: {txn['due_jalali_date']}{time_str}\n"
+    if txn["description"]:
+        text += f"📝 توضیحات: {txn['description']}\n"
+
+    has_photo = bool(txn["photo_path"])
+    has_payment_photo = any(p["photo_path"] for p in payments) if payments else False
+    has_payment_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
+
+    if has_photo:
+        text += f"📸 عکس: ✅ دارد\n"
+    if has_payment_photo:
+        text += f"📸 رسید پرداخت: ✅ دارد\n"
+
+    if txn["card_number"]:
+        card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 شماره کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn['sheba']}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {txn['bank_name']}\n"
+
+    if payments:
+        text += f"\n📊 سوابق پرداخت ({len(payments)} فقره):\n"
+        for p in payments:
+            text += f"  💰 {format_amount(p['amount'])} تومان"
+            text += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                text += f" | {p['description']}"
+            if p["photo_path"]:
+                text += f" | 📸 رسید"
+            text += "\n"
+
+    text += f"\n📅 تاریخ ثبت: {txn['jalali_date']} ساعت {txn['jalali_time']}"
+
+    cache_key = ""
+    safe_party = ""
+    async with _debt_payments_lock:
+        for ck, customers_dict in _debt_payments_cache.items():
+            for party, data in customers_dict.items():
+                if txn_id in data["txn_ids"]:
+                    cache_key = ck
+                    safe_party = party.replace(":", "_")
+                    break
+            if cache_key:
+                break
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=debt_payments_detail_keyboard(
+            txn["id"], cache_key, safe_party,
+            has_photo, has_payment_photo, has_payment_info
+        )
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("dvp_bi:"))
+async def debt_payments_detail_back(callback: CallbackQuery):
+    """Back from Level 3 to Level 2 (customer payment list)."""
+    parts = callback.data.split(":", 2)
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+    cache_key = parts[1]
+    safe_party = parts[2]
+
+    async with _debt_payments_lock:
+        cached = _debt_payments_cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    customer = None
+    for party, data in cached.items():
+        if party.replace(":", "_") == safe_party:
+            customer = data
+            break
+    if not customer:
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    all_payments = PaymentRepository.get_by_user_and_type(
+        int(cache_key.split("_")[-1]), "debt_payment", limit=200
+    )
+    cust_payments = [p for p in all_payments if p["transaction_id"] in customer["txn_ids"]]
+
+    txn_ids_in_cust = list(customer["txn_ids"])
+    txns = {}
+    for tid in txn_ids_in_cust:
+        t = TransactionRepository.get_by_id(tid)
+        if t:
+            txns[tid] = t
+
+    text = f"👤 {customer['party']}\n"
+    text += f"💰 مجموع پرداختی: {format_amount(customer['total_paid'])} تومان\n"
+    text += f"📌 {customer['payment_count']} پرداخت در {len(txn_ids_in_cust)} بدهی\n"
+    text += "——————————"
+
+    items_data = []
+    for tid in sorted(txn_ids_in_cust, reverse=True):
+        txn = txns.get(tid)
+        if not txn:
+            continue
+        txn_payments = [p for p in cust_payments if p["transaction_id"] == tid]
+        txn_paid = sum(p["amount"] for p in txn_payments)
+        txn_pct = int((txn_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+        remaining_txn = max(0, txn["amount"] - txn_paid)
+
+        if remaining_txn <= 0:
+            emoji = "🟢"
+        elif txn_paid > 0:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+
+        label = f"{emoji} #{tid} | {format_amount(txn_paid)} از {format_amount(txn['amount'])} تومان ({txn_pct}%)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"dvp_detail:{tid}",
+            "detail_callback": f"dvp_detail:{tid}"
+        })
+
+        for p in txn_payments:
+            pay_line = f"  💰 {format_amount(p['amount'])} تومان"
+            pay_line += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                pay_line += f" | {p['description']}"
+            if p["photo_path"]:
+                pay_line += f" | 📸 رسید"
+            text += f"\n{pay_line}"
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "📋 بدهی مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_items_keyboard(items_data, cache_key, back_callback="dvp_bc")
+    )
+    await safe_callback_answer(callback)
+
+
+# ==============================
+# Receivable Collections View (3-Level)
+# ==============================
+
+@router.callback_query(F.data == "recv_view_payments")
+async def recv_view_payments_handler(callback: CallbackQuery):
+    """Level 1: Show receivable collection records grouped by customer."""
+    await safe_delete(callback.message)
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    payments = PaymentRepository.get_by_user_and_type(user["id"], "receivable_payment", limit=100)
+    if not payments:
+        await callback.message.answer(RECV_VIEW_PAYMENTS_EMPTY, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    txn_ids = list(set(p["transaction_id"] for p in payments))
+    txns = {}
+    for tid in txn_ids:
+        t = TransactionRepository.get_by_id(tid)
+        if t:
+            txns[tid] = t
+
+    customers: dict = {}
+    for p in payments:
+        txn = txns.get(p["transaction_id"])
+        party = txn["party_name"] if txn else "-"
+        if party not in customers:
+            customers[party] = {
+                "party": party,
+                "total_paid": 0,
+                "payment_count": 0,
+                "txn_ids": set(),
+            }
+        customers[party]["total_paid"] += p["amount"]
+        customers[party]["payment_count"] += 1
+        customers[party]["txn_ids"].add(p["transaction_id"])
+
+    cache_key = f"recv_payments_{user['id']}"
+    async with _recv_payments_lock:
+        _recv_payments_cache[cache_key] = customers
+        _evict_cache(_recv_payments_cache)
+
+    total_paid_all = sum(c["total_paid"] for c in customers.values())
+    total_payments = sum(c["payment_count"] for c in customers.values())
+    total_customers = len(customers)
+
+    text = f"{RECV_VIEW_PAYMENTS_TITLE}\n\n"
+    text += f"💰 مجموع کل دریافتی‌ها: {format_amount(total_paid_all)} تومان\n"
+    text += f"📌 {total_payments} دریافت | 👥 {total_customers} مشتری\n"
+    text += "────────────────────"
+
+    buttons_data = []
+    for party in sorted(customers.keys()):
+        c = customers[party]
+        safe_key = party.replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
+        label = f"👤 {c['party']} | {format_amount(c['total_paid'])} تومان ({c['payment_count']} دریافت)"
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"rvp_cust:{short_id}"
+        })
+
+    await callback.message.answer(text)
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=recv_payments_customer_keyboard(buttons_data)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "recv_view_payments_back")
+async def recv_view_payments_back(callback: CallbackQuery):
+    """Back from level 1 to Receivable Submenu."""
+    await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("rvp_cust:"))
+async def recv_payments_customer_selected(callback: CallbackQuery):
+    """Level 2: Show collections for a selected customer, grouped by receivable."""
+    short_id = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
+
+    async with _recv_payments_lock:
+        cached = _recv_payments_cache.get(cache_key)
+    if not cached:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    customer = None
+    for party, data in cached.items():
+        if party.replace(":", "_") == safe_party:
+            customer = data
+            break
+
+    if not customer:
+        await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
+        return
+
+    all_payments = PaymentRepository.get_by_user_and_type(
+        int(cache_key.split("_")[-1]), "receivable_payment", limit=200
+    )
+    cust_payments = [p for p in all_payments if p["transaction_id"] in customer["txn_ids"]]
+
+    txn_ids_in_cust = list(customer["txn_ids"])
+    txns = {}
+    for tid in txn_ids_in_cust:
+        t = TransactionRepository.get_by_id(tid)
+        if t:
+            txns[tid] = t
+
+    text = f"👤 {customer['party']}\n"
+    text += f"💰 مجموع دریافتی: {format_amount(customer['total_paid'])} تومان\n"
+    text += f"📌 {customer['payment_count']} دریافت در {len(txn_ids_in_cust)} طلب\n"
+    text += "——————————"
+
+    items_data = []
+    for tid in sorted(txn_ids_in_cust, reverse=True):
+        txn = txns.get(tid)
+        if not txn:
+            continue
+        txn_payments = [p for p in cust_payments if p["transaction_id"] == tid]
+        txn_paid = sum(p["amount"] for p in txn_payments)
+        txn_remaining = max(0, txn["amount"] - txn_paid)
+        txn_pct = int((txn_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+
+        if txn_remaining <= 0:
+            emoji = "🟢"
+        elif txn_paid > 0:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+
+        label = f"{emoji} #{tid} | {format_amount(txn_paid)} از {format_amount(txn['amount'])} تومان ({txn_pct}%)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"rvp_detail:{tid}",
+            "detail_callback": f"rvp_detail:{tid}"
+        })
+
+        for p in txn_payments:
+            pay_line = f"  💰 {format_amount(p['amount'])} تومان"
+            pay_line += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                pay_line += f" | {p['description']}"
+            if p["photo_path"]:
+                pay_line += f" | 📸 رسید"
+            text += f"\n{pay_line}"
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "📋 طلب مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_items_keyboard(items_data, cache_key, back_callback="rvp_bc")
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("rvp_bc:"))
+async def recv_payments_back_to_level1(callback: CallbackQuery):
+    """Back from Level 2 to Level 1 (customer list)."""
+    cache_key = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+
+    async with _recv_payments_lock:
+        cached = _recv_payments_cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    total_paid_all = sum(c["total_paid"] for c in cached.values())
+    total_payments = sum(c["payment_count"] for c in cached.values())
+    total_customers = len(cached)
+
+    text = f"{RECV_VIEW_PAYMENTS_TITLE}\n\n"
+    text += f"💰 مجموع کل دریافتی‌ها: {format_amount(total_paid_all)} تومان\n"
+    text += f"📌 {total_payments} دریافت | 👥 {total_customers} مشتری\n"
+    text += "────────────────────"
+
+    buttons_data = []
+    for party in sorted(cached.keys()):
+        c = cached[party]
+        safe_key = party.replace(":", "_")
+        short_id = await _register_callback_data(cache_key, safe_key)
+        label = f"👤 {c['party']} | {format_amount(c['total_paid'])} تومان ({c['payment_count']} دریافت)"
+        buttons_data.append({
+            "label": label,
+            "callback_data": f"rvp_cust:{short_id}"
+        })
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "👤 مشتری مورد نظر را انتخاب کنید:",
+        reply_markup=recv_payments_customer_keyboard(buttons_data)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("rvp_detail:"))
+async def recv_payments_detail(callback: CallbackQuery):
+    """Level 3: Show full details for a receivable with its collections."""
+    try:
+        txn_id = int(callback.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    txn = TransactionRepository.get_by_id(txn_id)
+    if not txn:
+        await safe_callback_answer(callback, "⚠️ طلب یافت نشد.", show_alert=True)
+        return
+
+    payments = PaymentRepository.get_by_transaction(txn["id"])
+    total_paid = sum(p["amount"] for p in payments) if payments else 0
+    remaining = max(0, txn["amount"] - total_paid)
+    is_fully_settled = txn["is_settled"] or remaining <= 0
+    percentage = int((total_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+
+    if is_fully_settled:
+        text = f"🟢 دریافت کامل (100%)\n\n"
+    else:
+        text = f"🟡 دریافت جزئی ({percentage}%)\n\n"
+
+    text += f"🆔 شناسه طلب: {txn['id']}\n"
+    text += f"👤 مشتری: {txn['party_name'] or '-'}\n"
+    cat_str = txn["category"] or "-"
+    if txn["subcategory"]:
+        cat_str += f" / {txn['subcategory']}"
+    text += f"🏷 دسته‌بندی: {cat_str}\n"
+    text += f"💰 مبلغ کل طلب: {format_amount(txn['amount'])} تومان\n"
+    text += f"💰 مجموع دریافتی: {format_amount(total_paid)} تومان\n"
+    if remaining > 0:
+        text += f"💰 باقی‌مانده: {format_amount(remaining)} تومان\n"
+    text += f"📊 درصد تسویه: {percentage}%\n"
+
+    if txn["due_jalali_date"]:
+        time_str = f" ساعت {txn['due_jalali_time']}" if txn["due_jalali_time"] else ""
+        text += f"📅 سررسید: {txn['due_jalali_date']}{time_str}\n"
+    if txn["description"]:
+        text += f"📝 توضیحات: {txn['description']}\n"
+
+    has_photo = bool(txn["photo_path"])
+    has_payment_photo = any(p["photo_path"] for p in payments) if payments else False
+    has_payment_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
+
+    if has_photo:
+        text += f"📸 عکس: ✅ دارد\n"
+    if has_payment_photo:
+        text += f"📸 رسید دریافت: ✅ دارد\n"
+
+    if txn["card_number"]:
+        card_fmt = "-".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
+        text += f"💳 شماره کارت: {card_fmt}\n"
+    if txn["sheba"]:
+        text += f"🏦 شبا: {txn['sheba']}\n"
+    if txn["bank_name"]:
+        text += f"🏛 بانک: {txn['bank_name']}\n"
+
+    if payments:
+        text += f"\n📊 سوابق دریافت ({len(payments)} فقره):\n"
+        for p in payments:
+            text += f"  💰 {format_amount(p['amount'])} تومان"
+            text += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                text += f" | {p['description']}"
+            if p["photo_path"]:
+                text += f" | 📸 رسید"
+            text += "\n"
+
+    text += f"\n📅 تاریخ ثبت: {txn['jalali_date']} ساعت {txn['jalali_time']}"
+
+    cache_key = ""
+    safe_party = ""
+    async with _recv_payments_lock:
+        for ck, customers_dict in _recv_payments_cache.items():
+            for party, data in customers_dict.items():
+                if txn_id in data["txn_ids"]:
+                    cache_key = ck
+                    safe_party = party.replace(":", "_")
+                    break
+            if cache_key:
+                break
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=recv_payments_detail_keyboard(
+            txn["id"], cache_key, safe_party,
+            has_photo, has_payment_photo, has_payment_info
+        )
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("rvp_bi:"))
+async def recv_payments_detail_back(callback: CallbackQuery):
+    """Back from Level 3 to Level 2 (customer collection list)."""
+    parts = callback.data.split(":", 2)
+    if len(parts) < 3:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+    cache_key = parts[1]
+    safe_party = parts[2]
+
+    async with _recv_payments_lock:
+        cached = _recv_payments_cache.get(cache_key)
+    if not cached:
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    customer = None
+    for party, data in cached.items():
+        if party.replace(":", "_") == safe_party:
+            customer = data
+            break
+    if not customer:
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    all_payments = PaymentRepository.get_by_user_and_type(
+        int(cache_key.split("_")[-1]), "receivable_payment", limit=200
+    )
+    cust_payments = [p for p in all_payments if p["transaction_id"] in customer["txn_ids"]]
+
+    txn_ids_in_cust = list(customer["txn_ids"])
+    txns = {}
+    for tid in txn_ids_in_cust:
+        t = TransactionRepository.get_by_id(tid)
+        if t:
+            txns[tid] = t
+
+    text = f"👤 {customer['party']}\n"
+    text += f"💰 مجموع دریافتی: {format_amount(customer['total_paid'])} تومان\n"
+    text += f"📌 {customer['payment_count']} دریافت در {len(txn_ids_in_cust)} طلب\n"
+    text += "——————————"
+
+    items_data = []
+    for tid in sorted(txn_ids_in_cust, reverse=True):
+        txn = txns.get(tid)
+        if not txn:
+            continue
+        txn_payments = [p for p in cust_payments if p["transaction_id"] == tid]
+        txn_paid = sum(p["amount"] for p in txn_payments)
+        txn_remaining = max(0, txn["amount"] - txn_paid)
+        txn_pct = int((txn_paid / txn["amount"]) * 100) if txn["amount"] > 0 else 0
+
+        if txn_remaining <= 0:
+            emoji = "🟢"
+        elif txn_paid > 0:
+            emoji = "🟡"
+        else:
+            emoji = "🔴"
+
+        label = f"{emoji} #{tid} | {format_amount(txn_paid)} از {format_amount(txn['amount'])} تومان ({txn_pct}%)"
+        items_data.append({
+            "label": label,
+            "callback_data": f"rvp_detail:{tid}",
+            "detail_callback": f"rvp_detail:{tid}"
+        })
+
+        for p in txn_payments:
+            pay_line = f"  💰 {format_amount(p['amount'])} تومان"
+            pay_line += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                pay_line += f" | {p['description']}"
+            if p["photo_path"]:
+                pay_line += f" | 📸 رسید"
+            text += f"\n{pay_line}"
+
+    await callback.message.edit_text(text)
+    await callback.message.answer(
+        "📋 طلب مورد نظر را انتخاب کنید:",
+        reply_markup=settlement_items_keyboard(items_data, cache_key, back_callback="rvp_bc")
+    )
+    await safe_callback_answer(callback)
+
+
 # --- Receivable submenu ---
 
 @router.message(F.text == "💵 طلب‌ها")
@@ -4174,11 +5208,31 @@ async def receivable_item_detail(callback: CallbackQuery):
         text += f"🏛 بانک: {normalize_bank_name(txn["bank_name"])}\n"
     text += f"📅 ثبت: {txn["jalali_date"]} ساعت {txn["jalali_time"]}"
 
+    payments = PaymentRepository.get_by_transaction(txn["id"])
+    has_payment_photo = any(p["photo_path"] for p in payments) if payments else False
+
     has_photo = bool(txn["photo_path"])
     has_pay_info = bool(txn["card_number"] or txn["sheba"] or txn["bank_name"])
 
+    if has_photo:
+        text += f"\n📸 عکس: ✅ دارد"
+    if has_payment_photo:
+        text += f"\n📸 رسید پرداخت: ✅ دارد"
+
+    if payments:
+        total_paid = sum(p["amount"] for p in payments)
+        text += f"\n\n📊 سوابق پرداخت ({len(payments)} فقره):\n"
+        for p in payments:
+            text += f"  💰 {format_amount(p['amount'])} تومان"
+            text += f" | {p['jalali_date']} ساعت {p['jalali_time']}"
+            if p["description"]:
+                text += f" | {p['description']}"
+            if p["photo_path"]:
+                text += f" | 📸 رسید"
+            text += "\n"
+
     back_short_id = await _register_callback_data(cache_key, safe_party)
-    kb = recv_detail_keyboard(txn_id, cache_key, safe_party, has_photo, remaining, has_pay_info,
+    kb = recv_detail_keyboard(txn_id, cache_key, safe_party, has_photo, remaining, has_pay_info, has_payment_photo,
                               back_callback=f"recv_detail_back:{back_short_id}")
     await callback.message.edit_text(text, reply_markup=kb)
     await safe_callback_answer(callback)
@@ -5362,6 +6416,14 @@ async def debt_settled_back_to_items(callback: CallbackQuery):
 _settlement_groups_cache: dict = {}
 _settlement_groups_lock = asyncio.Lock()
 
+# In-memory cache for debt payments view
+_debt_payments_cache: dict = {}
+_debt_payments_lock = asyncio.Lock()
+
+# In-memory cache for receivable collections view
+_recv_payments_cache: dict = {}
+_recv_payments_lock = asyncio.Lock()
+
 
 def _build_settlement_status_text(txn: dict, total_paid: float, remaining: float) -> str:
     """Build status indicator text for a settlement item."""
@@ -5442,7 +6504,7 @@ async def settlement_debt_list(callback: CallbackQuery):
 
     await callback.message.answer(
         "👤 مشتری مورد نظر را انتخاب کنید:",
-        reply_markup=settlement_customer_keyboard(buttons_data, "debt_settled_cat")
+        reply_markup=settlement_customer_keyboard(buttons_data, "debt_view_payments")
     )
     await safe_callback_answer(callback)
 
@@ -5755,7 +6817,7 @@ async def settlement_back_to_customers(callback: CallbackQuery):
             "callback_data": f"stl_cust:{short_id}"
         })
 
-    back_cb = "debt_settled_cat" if txn_type == "debt" else "receivable_settled_cat"
+    back_cb = "debt_view_payments" if txn_type == "debt" else "receivable_settled_cat"
     await callback.message.edit_text(summary)
     await callback.message.answer(
         "👤 مشتری مورد نظر را انتخاب کنید:",
@@ -6250,14 +7312,16 @@ async def payment_type_handler(callback: CallbackQuery, state: FSMContext):
                 f"{type_emoji} {action_verb} {type_label}\n\n"
                 f"💰 مبلغ: {format_amount(pay_amount)} تومان (کامل)\n\n"
                 f"━━━━━━━━━━━━━━━\n\n"
-                f"STEP 3:\n📝 توضیحات:\n(اختیاری - برای رد کردن «⏭️ رد کردن» را بزنید)",
+                f"📸 رسید پرداخت (اختیاری):\n"
+                f"متن، عکس، یا هر دو را ارسال کنید.\n"
+                f"برای رد کردن «⏭️ بدون رسید» را بزنید.",
                 reply_markup=None
             )
             await callback.message.answer(
-                f"📝 توضیحات {action_verb} (اختیاری):",
-                reply_markup=customer_skip_menu()
+                f"📸 رسید {action_verb} (اختیاری):",
+                reply_markup=receipt_skip_menu()
             )
-            await state.set_state(PaymentForm.description)
+            await state.set_state(PaymentForm.receipt)
         else:
             pay_type_name = data.get("payment_type", "receivable")
             type_emoji = "💳" if pay_type_name == "debt" else "💵"
@@ -6290,14 +7354,17 @@ async def payment_type_handler(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             f"{type_emoji} پرداخت {type_label}\n\n"
             f"💰 مبلغ: {format_amount(remaining)} تومان (کامل)\n\n"
-            f"📝 توضیحات پرداخت (اختیاری):\nبرای رد کردن، «⏭️ رد کردن» را بزنید.",
+            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"📸 رسید پرداخت (اختیاری):\n"
+            f"متن، عکس، یا هر دو را ارسال کنید.\n"
+            f"برای رد کردن «⏭️ بدون رسید» را بزنید.",
             reply_markup=None
         )
         await callback.message.answer(
-            "📝 توضیحات پرداخت (اختیاری):",
-            reply_markup=customer_skip_menu()
+            "📸 رسید پرداخت (اختیاری):",
+            reply_markup=receipt_skip_menu()
         )
-        await state.set_state(PaymentForm.description)
+        await state.set_state(PaymentForm.receipt)
         await safe_callback_answer(callback)
         return
 
@@ -6360,10 +7427,12 @@ async def payment_amount_handler(message: Message, state: FSMContext):
             f"{type_emoji} {action_verb} {type_label}\n\n"
             f"💰 مبلغ: {format_amount(amount)} تومان\n\n"
             f"━━━━━━━━━━━━━━━━━━\n\n"
-            f"STEP 3:\n📝 توضیحات:\n(اختیاری - برای رد کردن «⏭️ رد کردن» را بزنید)",
-            reply_markup=customer_skip_menu()
+            f"📸 رسید پرداخت (اختیاری):\n"
+            f"متن، عکس، یا هر دو را ارسال کنید.\n"
+            f"برای رد کردن «⏭️ بدون رسید» را بزنید.",
+            reply_markup=receipt_skip_menu()
         )
-        await state.set_state(PaymentForm.description)
+        await state.set_state(PaymentForm.receipt)
         return
 
     # Single transaction payment
@@ -6386,37 +7455,37 @@ async def payment_amount_handler(message: Message, state: FSMContext):
         f"{type_emoji} {action_verb} {type_label}\n\n"
         f"💰 مبلغ: {format_amount(amount)} تومان\n\n"
         f"━━━━━━━━━━━━━━━━━━\n\n"
-        f"STEP 3:\n📝 توضیحات:\n(اختیاری - برای رد کردن «⏭️ رد کردن» را بزنید)",
-        reply_markup=customer_skip_menu()
+        f"📸 رسید پرداخت (اختیاری):\n"
+        f"متن، عکس، یا هر دو را ارسال کنید.\n"
+        f"برای رد کردن «⏭️ بدون رسید» را بزنید.",
+        reply_markup=receipt_skip_menu()
     )
-    await state.set_state(PaymentForm.description)
+    await state.set_state(PaymentForm.receipt)
 
-@router.message(PaymentForm.description)
-async def payment_description_handler(message: Message, state: FSMContext):
-    """Handle optional payment description input."""
+@router.message(PaymentForm.receipt)
+async def payment_receipt_handler(message: Message, state: FSMContext):
+    """Handle unified receipt input - text, photo, or both (optional)."""
     if message.text == "❌ انصراف":
         await state.clear()
         await message.answer(CANCELED, reply_markup=main_menu())
         return
 
     if message.text == "🔙 بازگشت":
-        # Go back to payment type selection
         data = await state.get_data()
         if data.get("customer_party"):
             party = data["customer_party"]
             total_remaining = data.get("customer_total_remaining", 0)
-            text = f"💵 دریافت طلب\n\n"
-            text += f"👤 مشتری: {party}\n"
-            text += f"💰 بدهی کل: {format_amount(total_remaining)} تومان\n\n"
-            text += f"━━━━━━━━━━━━━━━━━━\n\n"
-            text += f"STEP 1:\n💰 انتخاب نوع پرداخت:\n"
-            text += f"├── 💰 کامل ({format_amount(total_remaining)})\n"
-            text += f"└── ✂️ جزئی (ورود مبلغ)"
+            text = (
+                f"💵 دریافت طلب\n\n"
+                f"👤 مشتری: {party}\n"
+                f"💰 بدهی کل: {format_amount(total_remaining)} تومان\n\n"
+                f"━━━━━━━━━━━━━━━━━━\n\n"
+                f"STEP 1:\n💰 انتخاب نوع پرداخت:\n"
+                f"├── 💰 کامل ({format_amount(total_remaining)})\n"
+                f"└── ✂️ جزئی (ورود مبلغ)"
+            )
             await message.answer(text, reply_markup=payment_type_keyboard())
         else:
-            txn_id = data.get("selected_txn_id")
-            payments_data = data.get("payments_data", {})
-            remaining = payments_data.get(txn_id, 0)
             await message.answer(
                 "نوع دریافت را انتخاب کنید:",
                 reply_markup=payment_type_keyboard()
@@ -6424,94 +7493,72 @@ async def payment_description_handler(message: Message, state: FSMContext):
         await state.set_state(PaymentForm.payment_type)
         return
 
-    if message.text and message.text != "⏭️ رد کردن":
-        await state.update_data(pay_description=message.text.strip())
-
-    data = await state.get_data()
-    pay_type_name = data.get("payment_type", "receivable")
-    type_emoji = "💳" if pay_type_name == "debt" else "💵"
-    type_label = "بدهی" if pay_type_name == "debt" else "طلب"
-    action_verb = "پرداخت" if pay_type_name == "debt" else "دریافت"
-
-    await message.answer(
-        f"{type_emoji} {action_verb} {type_label}\n\n"
-        f"━━━━━━━━━━━━━━━━━━\n\n"
-        f"STEP 4:\n📸 رسید پرداخت:\n(اختیاری - عکس ارسال کنید یا «⏭️ بدون عکس» را بزنید)",
-        reply_markup=photo_skip_menu()
-    )
-    await state.set_state(PaymentForm.photo)
-
-@router.message(PaymentForm.photo)
-async def payment_photo_handler(message: Message, state: FSMContext):
-    """Handle optional receipt photo upload."""
-    if message.text == "❌ انصراف":
-        await state.clear()
-        await message.answer(CANCELED, reply_markup=main_menu())
+    if message.text == "⏭️ بدون رسید":
+        await _show_payment_confirm(message, state)
         return
 
-    if message.text == "🔙 بازگشت":
-        # Go back to description step
-        await message.answer(
-            "📝 توضیحات پرداخت (اختیاری):",
-            reply_markup=customer_skip_menu()
-        )
-        await state.set_state(PaymentForm.description)
-        return
-
-    photo_path = None
-    if message.text and message.text in ("⏭️ بدون عکس", "⏭️ رد کردن"):
-        photo_path = None
-    elif message.content_type == ContentType.PHOTO:
+    if message.photo:
         photo = message.photo[-1]
         try:
             photo_path = await _save_photo(message.bot, photo, message.from_user.id)
+            await state.update_data(pay_photo=photo_path)
         except Exception as e:
             logger.error(f"Error saving payment receipt photo: {e}")
-            await message.answer("⚠️ خطا در ذخیره عکس. لطفاً دوباره تلاش کنید یا «⏭️ بدون عکس» را بزنید.")
+            await message.answer("⚠️ خطا در ذخیره عکس. لطفاً دوباره تلاش کنید یا «⏭️ بدون رسید» را بزنید.")
             return
-    else:
-        await message.answer("📸 لطفاً یک عکس ارسال کنید یا «⏭️ بدون عکس» را انتخاب کنید.")
+
+        if message.caption:
+            await state.update_data(pay_description=message.caption.strip())
+        await _show_payment_confirm(message, state)
         return
 
-    if photo_path:
-        await state.update_data(pay_photo=photo_path)
+    if message.text:
+        await state.update_data(pay_description=message.text.strip())
+        await _show_payment_confirm(message, state)
+        return
 
-    # Build confirmation
+    await message.answer("📸 لطفاً متن، عکس، یا «⏭️ بدون رسید» را ارسال کنید.")
+
+
+async def _show_payment_confirm(message: Message, state: FSMContext):
+    """Show payment confirmation screen after receipt collection."""
     data = await state.get_data()
     pay_amount = data.get("pay_amount", 0)
     pay_description = data.get("pay_description")
+    pay_photo = data.get("pay_photo")
 
     if data.get("customer_party"):
-        # Customer-level FIFO confirmation
         party = data["customer_party"]
         total_remaining = data.get("customer_total_remaining", 0)
 
-        text = f"⚠️ تأیید نهایی\n\n"
-        text += f"├── 👤 مشتری: {party}\n"
-        text += f"├── 💰 مبلغ: {format_amount(pay_amount)} تومان\n"
-        text += f"├── 📝 توضیحات: {pay_description or '—'}\n"
-        text += f"└── 📸 رسید: {'✅ دارد' if data.get('pay_photo') else '❌ ندارد'}\n"
-        text += f"\n💰 باقی‌مانده: {format_amount(max(0, total_remaining - pay_amount))} تومان\n"
+        text = (
+            f"⚠️ تأیید نهایی\n\n"
+            f"├── 👤 مشتری: {party}\n"
+            f"├── 💰 مبلغ: {format_amount(pay_amount)} تومان\n"
+            f"├── 📝 توضیحات: {pay_description or '—'}\n"
+            f"└── 📸 رسید: {'✅ دارد' if pay_photo else '❌ ندارد'}\n"
+            f"\n💰 باقی‌مانده: {format_amount(max(0, total_remaining - pay_amount))} تومان\n"
+        )
 
         await message.answer(text, reply_markup=payment_confirm_keyboard())
         await state.set_state(PaymentForm.confirm)
     else:
-        # Single transaction confirmation
         txn_id = data.get("selected_txn_id")
         payments_data = data.get("payments_data", {})
         remaining = payments_data.get(txn_id, 0)
-
-        txn = TransactionRepository.get_by_id( txn_id)
+        txn = TransactionRepository.get_by_id(txn_id)
         pay_type = data.get("payment_type", "debt")
         type_label = "بدهی" if pay_type == "debt" else "طلب"
         type_emoji = "💳" if pay_type == "debt" else "💵"
 
-        text = f"⚠️ تأیید نهایی\n\n"
-        text += f"├── 👤 مشتری: {txn["party_name"] or '-'}\n"
-        text += f"├── 💰 مبلغ: {format_amount(pay_amount)} تومان\n"
-        text += f"├── 📝 توضیحات: {pay_description or '—'}\n"
-        text += f"└── 📸 رسید: {'✅ دارد' if data.get('pay_photo') else '❌ ندارد'}\n"
-        text += f"\n💰 باقی‌مانده: {format_amount(max(0, remaining - pay_amount))} تومان\n"
+        text = (
+            f"⚠️ تأیید نهایی\n\n"
+            f"├── 👤 مشتری: {txn["party_name"] or '-'}\n"
+            f"├── 💰 مبلغ: {format_amount(pay_amount)} تومان\n"
+            f"├── 📝 توضیحات: {pay_description or '—'}\n"
+            f"└── 📸 رسید: {'✅ دارد' if pay_photo else '❌ ندارد'}\n"
+            f"\n💰 باقی‌مانده: {format_amount(max(0, remaining - pay_amount))} تومان\n"
+        )
         if txn["card_number"]:
             card_fmt = " ".join([txn["card_number"][i:i+4] for i in range(0, 16, 4)])
             text += f"💳 کارت: {card_fmt}\n"

@@ -146,6 +146,85 @@ DEBT_REPORT_TITLE = """📊 گزارش جامع بدهی‌ها
 📊 نسبت تسویه: {settlement_rate}%
 📊 میانگین بدهی: {avg_debt} تومان"""
 
+DEBT_REPORT_ACTIVE = """⏳ گزارش بدهی‌های فعال
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد: {count} مورد
+└── مجموع: {total_amount} تومان
+
+{details}"""
+
+DEBT_REPORT_SETTLED = """✅ گزارش بدهی‌های تسویه شده
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد: {count} مورد
+└── مجموع: {total_amount} تومان
+
+{details}"""
+
+DEBT_REPORT_OVERDUE = """🔴 گزارش بدهی‌های سررسید گذشته
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد: {count} مورد
+└── مجموع: {total_amount} تومان
+
+{details}"""
+
+DEBT_REPORT_DUE_TODAY = """⏰ گزارش بدهی‌های سررسید امروز
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد: {count} مورد
+└── مجموع: {total_amount} تومان
+
+{details}"""
+
+DEBT_REPORT_DUE_WEEK = """📅 گزارش بدهی‌های سررسید این هفته
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد: {count} مورد
+└── مجموع: {total_amount} تومان
+
+{details}"""
+
+DEBT_REPORT_BY_CUSTOMER = """👥 گزارش بدهی‌ها بر اساس مشتری
+━━━━━━━━━━━━━━━━━━
+
+👥 تعداد مشتریان: {customer_count}
+
+{details}"""
+
+DEBT_REPORT_BY_CATEGORY = """🏷 گزارش بدهی‌ها بر اساس دسته‌بندی
+━━━━━━━━━━━━━━━━━━
+
+{details}"""
+
+DEBT_REPORT_PAYMENTS = """💰 گزارش پرداخت‌های بدهی
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد پرداخت‌ها: {payment_count} مورد
+└── مجموع پرداختی: {total_paid} تومان
+
+{details}"""
+
+DEBT_REPORT_REMAINING = """📊 گزارش مانده بدهی‌ها
+━━━━━━━━━━━━━━━━━━
+
+📋 خلاصه
+├── تعداد بدهی‌های فعال: {active_count} مورد
+├── مجموع مانده: {total_remaining} تومان
+└── مجموع کل بدهی: {total_amount} تومان
+
+{details}"""
+
+DEBT_REPORT_EMPTY = "📭 هیچ بدهی‌ای در این دسته وجود ندارد."
+DEBT_REPORTS_MENU = "📊 گزارش‌های بدهی\n\nلطفاً نوع گزارش را انتخاب کنید:"
+
 RECEIVABLE_REPORT_TITLE = """📊 گزارش جامع طلب‌ها
 ━━━━━━━━━━━━━━━━━━
 
@@ -340,9 +419,17 @@ DEBT_PAYMENT_HISTORY_EMPTY = "📭 هیچ پرداختی ثبت نشده است.
 # Grouped receivable view
 RECEIVABLE_SELECT_RECV = "📋 طلب مورد نظر را انتخاب کنید:"
 
+# Debt payment view messages
+DEBT_VIEW_PAYMENTS_TITLE = "📜 پرداخت‌های انجام شده"
+DEBT_VIEW_PAYMENTS_EMPTY = "📭 هیچ پرداختی ثبت نشده است.\n\nپس از اولین پرداخت بدهی، در این بخش نمایش داده می‌شود."
+
 # Settlement section messages
 SETTLEMENT_DEBT_TITLE = "📊 تسویه بدهی‌ها"
 SETTLEMENT_RECV_TITLE = "📊 تسویه طلب‌ها"
 SETTLEMENT_EMPTY = "📭 هیچ تسویه‌ای ثبت نشده است.\n\nتراکنش‌هایی که حداقل یک پرداخت داشته باشند در این بخش نمایش داده می‌شوند."
 SETTLEMENT_DEBT_EMPTY = "📭 هیچ بدهی با پرداخت ثبت نشده است.\n\nپس از اولین پرداخت بدهی، در این بخش نمایش داده می‌شود."
 SETTLEMENT_RECV_EMPTY = "📭 هیچ طلب با دریافت ثبت نشده است.\n\nپس از اولین دریافت طلب، در این بخش نمایش داده می‌شود."
+
+# Receivable collection view messages
+RECV_VIEW_PAYMENTS_TITLE = "📜 دریافت‌های انجام شده"
+RECV_VIEW_PAYMENTS_EMPTY = "📭 هیچ دریافتی ثبت نشده است.\n\nپس از اولین دریافت طلب، در این بخش نمایش داده می‌شود."

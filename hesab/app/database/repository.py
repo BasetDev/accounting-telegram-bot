@@ -718,3 +718,12 @@ class PaymentRepository:
             payment.pop("_id", None)
             result.append(payment)
         return result
+
+    @staticmethod
+    def get_by_user_and_type(user_id: int, payment_type: str, limit: int = 50) -> List[Dict]:
+        payments = get_collection("payments")
+        result = []
+        for payment in payments.find({"user_id": user_id, "payment_type": payment_type}).sort("id", DESCENDING).limit(limit):
+            payment.pop("_id", None)
+            result.append(payment)
+        return result

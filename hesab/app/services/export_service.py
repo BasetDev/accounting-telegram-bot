@@ -218,8 +218,8 @@ async def export_transactions_pdf(
     elements.append(table)
     
     # Summary
-    total_income = sum(t.amount for t in transactions if t.transaction_type == "income")
-    total_expense = sum(t.amount for t in transactions if t.transaction_type == "expense")
+    total_income = sum(t["amount"] for t in transactions if t["transaction_type"] == "income")
+    total_expense = sum(t["amount"] for t in transactions if t["transaction_type"] == "expense")
     
     summary_style = ParagraphStyle(
         "PersianSummary",

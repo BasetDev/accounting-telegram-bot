@@ -115,6 +115,48 @@ def export_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def debt_reports_submenu() -> InlineKeyboardMarkup:
+    """Debt reports submenu keyboard."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📊 گزارش کلی", callback_data="debt_rpt_summary"),
+        InlineKeyboardButton(text="⏳ بدهی‌های فعال", callback_data="debt_rpt_active")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✅ تسویه شده", callback_data="debt_rpt_settled"),
+        InlineKeyboardButton(text="🔴 سررسید گذشته", callback_data="debt_rpt_overdue")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⏰ سررسید امروز", callback_data="debt_rpt_due_today"),
+        InlineKeyboardButton(text="📅 سررسید این هفته", callback_data="debt_rpt_due_week")
+    )
+    builder.row(
+        InlineKeyboardButton(text="👥 بر اساس مشتری", callback_data="debt_rpt_by_customer"),
+        InlineKeyboardButton(text="🏷 بر اساس دسته‌بندی", callback_data="debt_rpt_by_category")
+    )
+    builder.row(
+        InlineKeyboardButton(text="💰 پرداخت‌ها", callback_data="debt_rpt_payments"),
+        InlineKeyboardButton(text="📊 مانده بدهی", callback_data="debt_rpt_remaining")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت به منوی بدهی‌ها", callback_data="debt_rpt_back")
+    )
+    return builder.as_markup()
+
+
+def debt_report_export_menu(report_type: str) -> InlineKeyboardMarkup:
+    """Export options for debt reports."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📊 Excel", callback_data=f"debt_rpt_export_excel:{report_type}"),
+        InlineKeyboardButton(text="📄 PDF", callback_data=f"debt_rpt_export_pdf:{report_type}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت به منوی گزارش‌ها", callback_data="debt_rpt_menu")
+    )
+    return builder.as_markup()
+
+
 def transaction_type_keyboard() -> InlineKeyboardMarkup:
     """Transaction type filter for search."""
     builder = InlineKeyboardBuilder()
@@ -250,6 +292,9 @@ def debt_submenu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📊 تسویه‌ها", callback_data="settlement_debt")
     )
     builder.row(
+        InlineKeyboardButton(text="📜 پرداخت‌های انجام شده", callback_data="debt_view_payments")
+    )
+    builder.row(
         InlineKeyboardButton(text="📊 گزارش بدهی‌ها", callback_data="debt_reports"),
         InlineKeyboardButton(text="📋 ثبت بدهی جدید", callback_data="debt_register")
     )
@@ -274,6 +319,9 @@ def receivable_submenu() -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(text="💵 دریافت طلب", callback_data="receivable_receive_cat"),
         InlineKeyboardButton(text="📊 تسویه‌ها", callback_data="settlement_recv")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📜 دریافت‌های انجام شده", callback_data="recv_view_payments")
     )
     builder.row(
         InlineKeyboardButton(text="📊 گزارش طلب‌ها", callback_data="receivable_reports"),
@@ -447,6 +495,14 @@ def bank_name_select_keyboard(bank_names: list) -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="✏️ ورود دستی نام بانک"))
     builder.row(KeyboardButton(text="⏭️ رد کردن"))
     builder.row(KeyboardButton(text="❌ انصراف"))
+    return builder.as_markup(resize_keyboard=True)
+
+
+def receipt_skip_menu() -> ReplyKeyboardMarkup:
+    """Keyboard for unified receipt step - text, photo, or skip."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(KeyboardButton(text="⏭️ بدون رسید"))
+    builder.row(KeyboardButton(text="🔙 بازگشت"), KeyboardButton(text="❌ انصراف"))
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -857,12 +913,15 @@ def debt_list_keyboard(txn_id: int, has_photo: bool = False, remaining: float = 
 def recv_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
                           has_photo: bool = False, remaining: float = None,
                           has_payment_info: bool = False,
+                          has_payment_photo: bool = False,
                           back_callback: str = None) -> InlineKeyboardMarkup:
     """Keyboard for individual receivable detail view with all actions."""
     builder = InlineKeyboardBuilder()
     buttons = []
     if has_photo:
         buttons.append(InlineKeyboardButton(text="📸 عکس", callback_data=f"view_photo:{txn_id}"))
+    if has_payment_photo:
+        buttons.append(InlineKeyboardButton(text="📸 رسید پرداخت", callback_data=f"view_payment_photo:{txn_id}"))
     if has_payment_info:
         buttons.append(InlineKeyboardButton(text="📩 پیامک", callback_data=f"recv_sms:{txn_id}"))
     if remaining is not None and remaining > 0:
@@ -1042,7 +1101,7 @@ def settlement_customer_keyboard(customers_data: list, back_callback: str = "set
     return builder.as_markup()
 
 
-def settlement_items_keyboard(items_data: list, cache_key: str, back_callback: str = "settlement_back") -> InlineKeyboardMarkup:
+def settlement_items_keyboard(items_data: list, cache_key: str, back_callback: str = "stl_bc") -> InlineKeyboardMarkup:
     """Keyboard showing settlement items of a customer."""
     builder = InlineKeyboardBuilder()
     for item in items_data:
@@ -1050,7 +1109,7 @@ def settlement_items_keyboard(items_data: list, cache_key: str, back_callback: s
             InlineKeyboardButton(text=item["label"], callback_data=item["callback_data"]),
             InlineKeyboardButton(text="📋 جزئیات", callback_data=item["detail_callback"])
         )
-    builder.row(InlineKeyboardButton(text="🔙 بازگشت به مشتریان", callback_data=f"stl_bc:{cache_key}"))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به مشتریان", callback_data=f"{back_callback}:{cache_key}"))
     return builder.as_markup()
 
 
@@ -1070,4 +1129,62 @@ def settlement_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
     history_cb = f"debt_payment_history:{txn_id}" if txn_type == "debt" else f"receivable_payment_history:{txn_id}"
     builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=history_cb))
     builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"stl_bi:{cache_key}:{safe_party}"))
+    return builder.as_markup()
+
+
+def debt_payments_customer_keyboard(customers_data: list) -> InlineKeyboardMarkup:
+    """Keyboard for selecting a customer in debt payments view."""
+    builder = InlineKeyboardBuilder()
+    for item in customers_data:
+        builder.row(InlineKeyboardButton(text=item["label"], callback_data=item["callback_data"]))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به منوی بدهی‌ها", callback_data="debt_view_payments_back"))
+    return builder.as_markup()
+
+
+def debt_payments_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
+                                   has_photo: bool = False,
+                                   has_payment_photo: bool = False,
+                                   has_payment_info: bool = False) -> InlineKeyboardMarkup:
+    """Keyboard for payment detail view with all actions."""
+    builder = InlineKeyboardBuilder()
+    buttons = []
+    if has_photo:
+        buttons.append(InlineKeyboardButton(text="📸 مشاهده عکس", callback_data=f"view_photo:{txn_id}"))
+    if has_payment_photo:
+        buttons.append(InlineKeyboardButton(text="📸 رسید پرداخت", callback_data=f"view_payment_photo:{txn_id}"))
+    if has_payment_info:
+        buttons.append(InlineKeyboardButton(text="📩 پیامک", callback_data=f"debt_sms:{txn_id}"))
+    if buttons:
+        builder.row(*buttons)
+    builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"debt_payment_history:{txn_id}"))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"dvp_bi:{cache_key}:{safe_party}"))
+    return builder.as_markup()
+
+
+def recv_payments_customer_keyboard(customers_data: list) -> InlineKeyboardMarkup:
+    """Keyboard for selecting a customer in receivable collections view."""
+    builder = InlineKeyboardBuilder()
+    for item in customers_data:
+        builder.row(InlineKeyboardButton(text=item["label"], callback_data=item["callback_data"]))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به منوی طلب‌ها", callback_data="recv_view_payments_back"))
+    return builder.as_markup()
+
+
+def recv_payments_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
+                                   has_photo: bool = False,
+                                   has_payment_photo: bool = False,
+                                   has_payment_info: bool = False) -> InlineKeyboardMarkup:
+    """Keyboard for receivable collection detail view with all actions."""
+    builder = InlineKeyboardBuilder()
+    buttons = []
+    if has_photo:
+        buttons.append(InlineKeyboardButton(text="📸 مشاهده عکس", callback_data=f"view_photo:{txn_id}"))
+    if has_payment_photo:
+        buttons.append(InlineKeyboardButton(text="📸 رسید دریافت", callback_data=f"view_payment_photo:{txn_id}"))
+    if has_payment_info:
+        buttons.append(InlineKeyboardButton(text="📩 پیامک", callback_data=f"recv_sms:{txn_id}"))
+    if buttons:
+        builder.row(*buttons)
+    builder.row(InlineKeyboardButton(text="📜 تاریخچه دریافت", callback_data=f"receivable_payment_history:{txn_id}"))
+    builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"rvp_bi:{cache_key}:{safe_party}"))
     return builder.as_markup()
