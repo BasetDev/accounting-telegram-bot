@@ -63,7 +63,9 @@ from app.keyboards.markups import (
     recv_payments_customer_keyboard,
     recv_payments_detail_keyboard,
     debt_reports_submenu,
-    debt_report_export_menu
+    debt_report_export_menu,
+    receivable_reports_submenu,
+    recv_report_export_menu
 )
 from app.utils.messages import *
 from app.utils.jdatetime_helper import (
@@ -6455,6 +6457,10 @@ _debt_payments_lock = asyncio.Lock()
 _recv_payments_cache: dict = {}
 _recv_payments_lock = asyncio.Lock()
 
+# In-memory cache for receivable reports
+_recv_rpt_cache: dict = {}
+_recv_rpt_lock = asyncio.Lock()
+
 
 def _build_settlement_status_text(txn: dict, total_paid: float, remaining: float) -> str:
     """Build status indicator text for a settlement item."""
@@ -7100,76 +7106,339 @@ async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMCon
 
 @router.callback_query(F.data == "receivable_reports")
 async def receivable_reports(callback: CallbackQuery):
-    """Show receivable summary report."""
+    """Show receivable reports submenu."""
     await safe_delete(callback.message)
+    await callback.message.answer(RECV_REPORTS_MENU, reply_markup=receivable_reports_submenu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "recv_rpt_back")
+async def recv_rpt_back(callback: CallbackQuery):
+    """Back from receivable reports to receivable submenu."""
+    await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "recv_rpt_menu")
+async def recv_rpt_menu(callback: CallbackQuery):
+    """Return to receivable reports submenu."""
+    await callback.message.edit_text(RECV_REPORTS_MENU, reply_markup=receivable_reports_submenu())
+    await safe_callback_answer(callback)
+
+
+def _get_all_receivables(user_id: int) -> list:
+    """Get all receivables for a user."""
+    return TransactionRepository.get_by_user(user_id, transaction_type="receivable", limit=1000)
+
+
+def _format_recv_detail_line(t: dict, idx: int = None) -> str:
+    """Format a single receivable detail line."""
+    prefix = f"{idx}. " if idx else ""
+    party = t.get("party_name") or "-"
+    amount = format_amount(t["amount"])
+    date = t.get("jalali_date") or "-"
+    status = "✅ وصول" if t.get("is_settled") else "⏳ فعال"
+    return f"{prefix}👤 {party} | {amount} تومان | {date} | {status}"
+
+
+def _format_recv_details(receivables: list, max_items: int = 20) -> str:
+    """Format a list of receivables into detail lines."""
+    if not receivables:
+        return RECV_REPORT_EMPTY
+    lines = []
+    for i, t in enumerate(receivables[:max_items], 1):
+        lines.append(_format_recv_detail_line(t, i))
+    if len(receivables) > max_items:
+        lines.append(f"\n... و {len(receivables) - max_items} مورد دیگر")
+    return "\n".join(lines)
+
+
+async def _send_recv_report(callback: CallbackQuery, report_type: str):
+    """Generate and send a receivable report with export options."""
     user = UserRepository.get_by_telegram_id(callback.from_user.id)
     if not user:
         await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
         return
 
-    all_receivables = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=1000)
+    all_receivables = _get_all_receivables(user["id"])
     today = get_jalali_date()
 
-    total = len(all_receivables)
-    total_amount = sum(t["amount"] for t in all_receivables)
+    active = [t for t in all_receivables if not t["is_settled"]]
+    settled = [t for t in all_receivables if t["is_settled"]]
+    overdue = [t for t in active if t.get("due_jalali_date") and t["due_jalali_date"] < today]
+    due_today = [t for t in active if t.get("due_jalali_date") == today]
 
-    # Get receivables with any payments (partial or full)
-    with_payments = TransactionRepository.get_with_payments(user["id"], "receivable", limit=1000)
-    with_payment_ids = {t["id"] for t in with_payments}
+    week_end = get_week_end_jalali()
+    due_week = [t for t in active if t.get("due_jalali_date") and today <= t["due_jalali_date"] <= week_end]
 
-    # Fully settled: is_settled flag OR remaining <= 0
-    fully_settled = [t for t in all_receivables if t["is_settled"]]
-    # Partially paid: has payments but not fully settled
-    partially_paid = [t for t in with_payments if not t["is_settled"]]
-    # All with payments (settled + partially paid)
-    all_with_payments = [t for t in all_receivables if t["id"] in with_payment_ids or t["is_settled"]]
-    # Active: no payments at all
-    active = [t for t in all_receivables if t["id"] not in with_payment_ids and not t["is_settled"]]
-    active_count = len(active)
-    active_amount = sum(t["amount"] for t in active)
+    report_text = ""
+    export_txns = []
 
-    settled_count = len(all_with_payments)
-    settled_amount = sum(t["amount"] for t in all_with_payments)
+    if report_type == "summary":
+        total = len(all_receivables)
+        total_amount = sum(t["amount"] for t in all_receivables)
+        active_amount = sum(t["amount"] for t in active)
+        settled_amount = sum(t["amount"] for t in settled)
+        overdue_amount = sum(t["amount"] for t in overdue)
+        collection_rate = (len(settled) / total * 100) if total > 0 else 0
+        avg_receivable = (total_amount / total) if total > 0 else 0
 
-    overdue = [t for t in active if t["due_jalali_date"] and t["due_jalali_date"] < today]
-    overdue_count = len(overdue)
-    overdue_amount = sum(t["amount"] for t in overdue)
+        total_paid_amount = 0
+        for t in settled:
+            payments = PaymentRepository.get_by_transaction(t["id"])
+            total_paid_amount += sum(p["amount"] for p in payments) if payments else 0
 
-    due_today = [t for t in active if t["due_jalali_date"] == today]
-    due_today_count = len(due_today)
+        report_text = RECEIVABLE_REPORT_TITLE.format(
+            total=total, total_amount=format_amount(total_amount),
+            active=len(active), active_amount=format_amount(active_amount),
+            settled=len(settled), settled_amount=format_amount(settled_amount),
+            overdue=len(overdue), overdue_amount=format_amount(overdue_amount),
+            due_today=len(due_today),
+            collection_rate=f"{collection_rate:.1f}",
+            avg_receivable=format_amount(avg_receivable),
+            total_paid=format_amount(total_paid_amount)
+        )
+        export_txns = all_receivables
 
-    # Calculate total paid amount
-    total_paid_amount = 0
-    for t in all_with_payments:
-        payments = PaymentRepository.get_by_transaction(t["id"])
-        total_paid_amount += sum(p["amount"] for p in payments) if payments else 0
+    elif report_type == "active":
+        total_amount = sum(t["amount"] for t in active)
+        report_text = RECV_REPORT_ACTIVE.format(
+            count=len(active), total_amount=format_amount(total_amount),
+            details=_format_recv_details(active)
+        )
+        export_txns = active
 
-    # Calculate additional metrics
-    collection_rate = (settled_count / total * 100) if total > 0 else 0
-    avg_receivable = (total_amount / total) if total > 0 else 0
+    elif report_type == "settled":
+        total_amount = sum(t["amount"] for t in settled)
+        report_text = RECV_REPORT_SETTLED.format(
+            count=len(settled), total_amount=format_amount(total_amount),
+            details=_format_recv_details(settled)
+        )
+        export_txns = settled
 
-    report = RECEIVABLE_REPORT_TITLE.format(
-        total=total,
-        total_amount=format_amount(total_amount),
-        active=active_count,
-        active_amount=format_amount(active_amount),
-        settled=settled_count,
-        settled_amount=format_amount(settled_amount),
-        overdue=overdue_count,
-        overdue_amount=format_amount(overdue_amount),
-        due_today=due_today_count,
-        collection_rate=f"{collection_rate:.1f}",
-        avg_receivable=format_amount(avg_receivable),
-        total_paid=format_amount(total_paid_amount)
+    elif report_type == "overdue":
+        total_amount = sum(t["amount"] for t in overdue)
+        report_text = RECV_REPORT_OVERDUE.format(
+            count=len(overdue), total_amount=format_amount(total_amount),
+            details=_format_recv_details(overdue)
+        )
+        export_txns = overdue
+
+    elif report_type == "due_today":
+        total_amount = sum(t["amount"] for t in due_today)
+        report_text = RECV_REPORT_DUE_TODAY.format(
+            count=len(due_today), total_amount=format_amount(total_amount),
+            details=_format_recv_details(due_today)
+        )
+        export_txns = due_today
+
+    elif report_type == "due_week":
+        total_amount = sum(t["amount"] for t in due_week)
+        report_text = RECV_REPORT_DUE_WEEK.format(
+            count=len(due_week), total_amount=format_amount(total_amount),
+            details=_format_recv_details(due_week)
+        )
+        export_txns = due_week
+
+    elif report_type == "by_customer":
+        customers = {}
+        for t in all_receivables:
+            party = t.get("party_name") or "-"
+            if party not in customers:
+                customers[party] = {"count": 0, "total": 0, "remaining": 0}
+            customers[party]["count"] += 1
+            customers[party]["total"] += t["amount"]
+            if not t["is_settled"]:
+                remaining = PaymentRepository.get_remaining(t["id"], t["amount"])
+                customers[party]["remaining"] += remaining
+
+        lines = []
+        for party in sorted(customers.keys()):
+            c = customers[party]
+            status = "✅ وصول" if c["remaining"] <= 0 else f"⏳ {format_amount(c['remaining'])} مانده"
+            lines.append(f"👤 {party}\n   📌 {c['count']} مورد | 💰 {format_amount(c['total'])} تومان | {status}")
+        report_text = RECV_REPORT_BY_CUSTOMER.format(
+            customer_count=len(customers),
+            details="\n".join(lines) if lines else RECV_REPORT_EMPTY
+        )
+        export_txns = all_receivables
+
+    elif report_type == "by_category":
+        categories = {}
+        for t in all_receivables:
+            cat = t.get("category") or "سایر"
+            if cat not in categories:
+                categories[cat] = {"count": 0, "total": 0}
+            categories[cat]["count"] += 1
+            categories[cat]["total"] += t["amount"]
+
+        lines = []
+        for cat in sorted(categories.keys()):
+            c = categories[cat]
+            lines.append(f"🏷 {cat}\n   📌 {c['count']} مورد | 💰 {format_amount(c['total'])} تومان")
+        report_text = RECV_REPORT_BY_CATEGORY.format(
+            details="\n".join(lines) if lines else RECV_REPORT_EMPTY
+        )
+        export_txns = all_receivables
+
+    elif report_type == "payments":
+        payments = PaymentRepository.get_by_user_and_type(user["id"], "receivable_payment", limit=500)
+        if not payments:
+            report_text = RECV_REPORT_PAYMENTS.format(payment_count=0, total_paid="0", details=RECV_REPORT_EMPTY)
+        else:
+            total_paid = sum(p["amount"] for p in payments)
+            lines = []
+            for p in payments[:20]:
+                txn = TransactionRepository.get_by_id(p["transaction_id"])
+                party = txn["party_name"] if txn else "-"
+                lines.append(f"💰 {format_amount(p['amount'])} تومان | 👤 {party} | {p['jalali_date']}")
+            if len(payments) > 20:
+                lines.append(f"\n... و {len(payments) - 20} مورد دیگر")
+            report_text = RECV_REPORT_PAYMENTS.format(
+                payment_count=len(payments),
+                total_paid=format_amount(total_paid),
+                details="\n".join(lines)
+            )
+        # For export, fetch the associated transactions
+        export_txns = []
+        for p in payments:
+            txn = TransactionRepository.get_by_id(p["transaction_id"])
+            if txn:
+                export_txns.append(txn)
+
+    elif report_type == "remaining":
+        remaining_recv = []
+        total_remaining = 0
+        for t in active:
+            rem = PaymentRepository.get_remaining(t["id"], t["amount"])
+            if rem > 0:
+                remaining_recv.append({**t, "_remaining": rem})
+                total_remaining += rem
+        remaining_recv.sort(key=lambda x: x["_remaining"], reverse=True)
+        total_amount = sum(t["amount"] for t in active)
+        lines = []
+        for t in remaining_recv[:20]:
+            pct = int((1 - t["_remaining"] / t["amount"]) * 100) if t["amount"] > 0 else 0
+            lines.append(f"👤 {t.get('party_name', '-')} | مانده: {format_amount(t['_remaining'])} تومان ({pct}% پرداخت شده)")
+        if len(remaining_recv) > 20:
+            lines.append(f"\n... و {len(remaining_recv) - 20} مورد دیگر")
+        report_text = RECV_REPORT_REMAINING.format(
+            active_count=len(active),
+            total_remaining=format_amount(total_remaining),
+            total_amount=format_amount(total_amount),
+            details="\n".join(lines) if lines else RECV_REPORT_EMPTY
+        )
+        export_txns = active
+
+    elif report_type in ("daily", "weekly", "monthly", "yearly"):
+        start, end = get_current_jalali_period(report_type)
+        date_range_txns = [t for t in all_receivables if start <= (t.get("jalali_date") or "") <= end]
+        active_range = [t for t in date_range_txns if not t["is_settled"]]
+        settled_range = [t for t in date_range_txns if t["is_settled"]]
+        total_amount = sum(t["amount"] for t in date_range_txns)
+        details = _format_recv_details(date_range_txns)
+        period_name = REPORT_PERIODS.get(report_type, report_type)
+        template = {
+            "daily": RECV_REPORT_DAILY,
+            "weekly": RECV_REPORT_WEEKLY,
+            "monthly": RECV_REPORT_MONTHLY,
+            "yearly": RECV_REPORT_YEARLY,
+        }.get(report_type, RECV_REPORT_DAILY)
+        report_text = template.format(
+            period=period_name, start=start, end=end,
+            count=len(date_range_txns), total_amount=format_amount(total_amount),
+            active_count=len(active_range), settled_count=len(settled_range),
+            details=details
+        )
+        export_txns = date_range_txns
+
+    # Cache report data for export
+    cache_key = f"recv_rpt_{user['id']}_{report_type}"
+    async with _recv_rpt_lock:
+        _recv_rpt_cache[cache_key] = {"txns": export_txns, "report_type": report_type}
+
+    if not report_text:
+        report_text = RECV_REPORT_EMPTY
+
+    await callback.message.edit_text(
+        report_text,
+        reply_markup=recv_report_export_menu(report_type)
     )
+    await safe_callback_answer(callback)
 
-    # Add partial payment breakdown
-    if partially_paid:
-        partial_amount = sum(t["amount"] for t in partially_paid)
-        report += f"\n\n⏳ پرداخت جزئی: {len(partially_paid)} مورد ({format_amount(partial_amount)} تومان)"
-        report += f"\n✅ تسویه کامل: {len(fully_settled)} مورد"
 
-    await callback.message.answer(report, reply_markup=receivable_submenu())
+@router.callback_query(
+    F.data.startswith("recv_rpt_")
+    & ~F.data.startswith("recv_rpt_export_")
+    & ~F.data.startswith("recv_rpt_back")
+    & ~F.data.startswith("recv_rpt_menu")
+)
+async def recv_report_handler(callback: CallbackQuery):
+    """Handle receivable report type selection."""
+    report_type = callback.data.replace("recv_rpt_", "")
+    await _send_recv_report(callback, report_type)
+
+
+@router.callback_query(F.data.startswith("recv_rpt_export_"))
+async def recv_report_export(callback: CallbackQuery):
+    """Handle receivable report export requests."""
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    export_part = parts[0].replace("recv_rpt_export_", "")
+    report_type = parts[1]
+
+    user = UserRepository.get_by_telegram_id(callback.from_user.id)
+    if not user:
+        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+        return
+
+    # Get cached report data
+    cache_key = f"recv_rpt_{user['id']}_{report_type}"
+    async with _recv_rpt_lock:
+        cached = _recv_rpt_cache.get(cache_key)
+
+    if not cached:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    export_txns = cached.get("txns", [])
+    if not export_txns:
+        await callback.message.edit_text("📭 هیچ داده‌ای برای خروجی وجود ندارد.")
+        await safe_callback_answer(callback)
+        return
+
+    await callback.message.edit_text("⏳ در حال ایجاد فایل خروجی...")
+
+    try:
+        if export_part == "excel":
+            filepath = await export_transactions_excel(
+                export_txns,
+                filename=f"recv_report_{report_type}_{get_jalali_date().replace('/', '-')}.xlsx"
+            )
+        elif export_part == "pdf":
+            filepath = await export_transactions_pdf(
+                export_txns,
+                filename=f"recv_report_{report_type}_{get_jalali_date().replace('/', '-')}.pdf"
+            )
+        else:
+            await callback.message.edit_text(ERROR_GENERAL)
+            await safe_callback_answer(callback)
+            return
+
+        document = FSInputFile(filepath)
+        await callback.message.answer_document(
+            document,
+            caption=f"📊 گزارش طلب ({report_type}) - {get_jalali_date()} ساعت {get_jalali_time()}"
+        )
+        await safe_delete(callback.message)
+
+    except Exception as e:
+        logger.error(f"Receivable report export error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
     await safe_callback_answer(callback)
 
 # ==============================

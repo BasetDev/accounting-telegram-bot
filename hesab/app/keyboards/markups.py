@@ -338,6 +338,56 @@ def receivable_submenu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def receivable_reports_submenu() -> InlineKeyboardMarkup:
+    """Receivable reports submenu keyboard."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📊 گزارش کلی", callback_data="recv_rpt_summary"),
+        InlineKeyboardButton(text="⏳ طلب‌های فعال", callback_data="recv_rpt_active")
+    )
+    builder.row(
+        InlineKeyboardButton(text="✅ وصول شده", callback_data="recv_rpt_settled"),
+        InlineKeyboardButton(text="🔴 سررسید گذشته", callback_data="recv_rpt_overdue")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⏰ سررسید امروز", callback_data="recv_rpt_due_today"),
+        InlineKeyboardButton(text="📅 سررسید این هفته", callback_data="recv_rpt_due_week")
+    )
+    builder.row(
+        InlineKeyboardButton(text="👥 بر اساس مشتری", callback_data="recv_rpt_by_customer"),
+        InlineKeyboardButton(text="🏷 بر اساس دسته‌بندی", callback_data="recv_rpt_by_category")
+    )
+    builder.row(
+        InlineKeyboardButton(text="💰 دریافت‌ها", callback_data="recv_rpt_payments"),
+        InlineKeyboardButton(text="📊 مانده طلب", callback_data="recv_rpt_remaining")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📅 گزارش روزانه", callback_data="recv_rpt_daily"),
+        InlineKeyboardButton(text="📅 گزارش هفتگی", callback_data="recv_rpt_weekly")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📅 گزارش ماهانه", callback_data="recv_rpt_monthly"),
+        InlineKeyboardButton(text="📅 گزارش سالانه", callback_data="recv_rpt_yearly")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت به منوی طلب‌ها", callback_data="recv_rpt_back")
+    )
+    return builder.as_markup()
+
+
+def recv_report_export_menu(report_type: str) -> InlineKeyboardMarkup:
+    """Export options for receivable reports."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="📊 Excel", callback_data=f"recv_rpt_export_excel:{report_type}"),
+        InlineKeyboardButton(text="📄 PDF", callback_data=f"recv_rpt_export_pdf:{report_type}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت به منوی گزارش‌ها", callback_data="recv_rpt_menu")
+    )
+    return builder.as_markup()
+
+
 # --- Category & Subcategory keyboards for Debt ---
 
 DEBT_CATEGORIES = {
