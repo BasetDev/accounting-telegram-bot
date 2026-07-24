@@ -3,6 +3,11 @@ INFO: Database indexes created successfully.
 INFO: MongoDB Atlas database initialized.
 INFO: Bot commands registered.
 INFO: 📊 حسابداری کسب‌وکار v1.0.0 started!
-Received SIGTERM signal
-INFO: MongoDB connection closed.
-INFO: Bot stopped and database connection closed.
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/recv_report_summary_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_weekly_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_settled_1405-05-03.xlsx
+INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx

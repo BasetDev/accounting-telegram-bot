@@ -3658,7 +3658,6 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
     overdue = [t for t in active if t.get("due_jalali_date") and t["due_jalali_date"] < today]
     due_today = [t for t in active if t.get("due_jalali_date") == today]
 
-    from app.utils.jdatetime_helper import get_week_end_jalali
     week_end = get_week_end_jalali()
     due_week = [t for t in active if t.get("due_jalali_date") and today <= t["due_jalali_date"] <= week_end]
 
@@ -3673,6 +3672,12 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
         overdue_amount = sum(t["amount"] for t in overdue)
         settlement_rate = (len(settled) / total * 100) if total > 0 else 0
         avg_debt = (total_amount / total) if total > 0 else 0
+
+        total_paid_amount = 0
+        for t in all_debts:
+            payments = PaymentRepository.get_by_transaction(t["id"])
+            total_paid_amount += sum(p["amount"] for p in payments) if payments else 0
+
         report_text = DEBT_REPORT_TITLE.format(
             total=total, total_amount=format_amount(total_amount),
             active=len(active), active_amount=format_amount(active_amount),
@@ -3680,7 +3685,8 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
             overdue=len(overdue), overdue_amount=format_amount(overdue_amount),
             due_today=len(due_today),
             settlement_rate=f"{settlement_rate:.1f}",
-            avg_debt=format_amount(avg_debt)
+            avg_debt=format_amount(avg_debt),
+            total_paid=format_amount(total_paid_amount)
         )
         export_txns = all_debts
 
@@ -3838,8 +3844,9 @@ async def _send_debt_report(callback: CallbackQuery, report_type: str):
 
     # Cache report data for export
     cache_key = f"debt_rpt_{user['id']}_{report_type}"
-    async with _debt_payments_lock:
-        _debt_payments_cache[cache_key] = {"txns": export_txns, "report_type": report_type}
+    async with _debt_rpt_lock:
+        _debt_rpt_cache[cache_key] = {"txns": export_txns, "report_type": report_type}
+        _evict_cache(_debt_rpt_cache)
 
     if not report_text:
         report_text = DEBT_REPORT_EMPTY
@@ -3881,8 +3888,8 @@ async def debt_report_export(callback: CallbackQuery):
 
     # Get cached report data
     cache_key = f"debt_rpt_{user['id']}_{report_type}"
-    async with _debt_payments_lock:
-        cached = _debt_payments_cache.get(cache_key)
+    async with _debt_rpt_lock:
+        cached = _debt_rpt_cache.get(cache_key)
 
     if not cached:
         await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
@@ -6638,6 +6645,10 @@ _debt_payments_lock = asyncio.Lock()
 _recv_payments_cache: dict = {}
 _recv_payments_lock = asyncio.Lock()
 
+# In-memory cache for debt reports
+_debt_rpt_cache: dict = {}
+_debt_rpt_lock = asyncio.Lock()
+
 # In-memory cache for receivable reports
 _recv_rpt_cache: dict = {}
 _recv_rpt_lock = asyncio.Lock()
@@ -6664,7 +6675,7 @@ def _build_settlement_status_text(txn: dict, total_paid: float, remaining: float
 
 @router.callback_query(F.data == "settlement_debt")
 async def settlement_debt_list(callback: CallbackQuery):
-    """Show all debts with payments (partially or fully settled), grouped by customer."""
+    """Show only fully settled debts (remaining = 0), grouped by customer."""
     await safe_delete(callback.message)
     user = UserRepository.get_by_telegram_id(callback.from_user.id)
     if not user:
@@ -6677,42 +6688,35 @@ async def settlement_debt_list(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    groups = _group_receivables_by_customer(txns)
+    fully_settled_txns = [
+        txn for txn in txns
+        if txn["is_settled"] or PaymentRepository.get_remaining(txn["id"], txn["amount"]) <= 0
+    ]
+    if not fully_settled_txns:
+        await callback.message.answer(SETTLEMENT_DEBT_EMPTY, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    groups = _group_receivables_by_customer(fully_settled_txns)
     cache_key = f"settlement_debt_{user['id']}"
     async with _settlement_groups_lock:
         _settlement_groups_cache[cache_key] = {g["party"]: g for g in groups}
         _evict_cache(_settlement_groups_cache)
 
     total_amount = sum(g["total"] for g in groups)
-    total_remaining = sum(g["remaining"] for g in groups)
-    total_paid = total_amount - total_remaining
     total_items = sum(g["count"] for g in groups)
     total_customers = len(groups)
 
     summary = f"📊 {SETTLEMENT_DEBT_TITLE}\n\n"
-    summary += f"💰 مجموع بدهی: {format_amount(total_amount)} تومان\n"
-    summary += f"💰 مجموع پرداختی: {format_amount(total_paid)} تومان\n"
-    if total_remaining > 0:
-        pct = int((total_paid / total_amount) * 100) if total_amount > 0 else 0
-        summary += f"💰 مجموع باقی‌مانده: {format_amount(total_remaining)} تومان\n"
-        summary += f"📊 درصد تسویه: {pct}%\n"
-    else:
-        summary += f"🟢 کاملاً تسویه شده\n"
+    summary += f"💰 مجموع بدهی تسویه شده: {format_amount(total_amount)} تومان\n"
+    summary += f"🟢 کاملاً تسویه شده\n"
     summary += f"👥 {total_customers} مشتری | 📌 {total_items} مورد"
 
     await callback.message.answer(summary)
 
     buttons_data = []
     for g in groups:
-        paid = g["total"] - g["remaining"]
-        if g["remaining"] <= 0:
-            pct = 100
-            label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
-        elif paid > 0:
-            pct = int((paid / g["total"]) * 100) if g["total"] > 0 else 0
-            label = f"🟡 {g['party']} | {format_amount(paid)}/{format_amount(g['total'])} تومان ({pct}%) ({g['count']} مورد)"
-        else:
-            label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
+        label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
         short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
@@ -6729,7 +6733,7 @@ async def settlement_debt_list(callback: CallbackQuery):
 
 @router.callback_query(F.data == "settlement_recv")
 async def settlement_recv_list(callback: CallbackQuery):
-    """Show all receivables with payments (partially or fully settled), grouped by customer."""
+    """Show only fully settled receivables (remaining = 0), grouped by customer."""
     await safe_delete(callback.message)
     user = UserRepository.get_by_telegram_id(callback.from_user.id)
     if not user:
@@ -6742,42 +6746,35 @@ async def settlement_recv_list(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    groups = _group_receivables_by_customer(txns)
+    fully_settled_txns = [
+        txn for txn in txns
+        if txn["is_settled"] or PaymentRepository.get_remaining(txn["id"], txn["amount"]) <= 0
+    ]
+    if not fully_settled_txns:
+        await callback.message.answer(SETTLEMENT_RECV_EMPTY, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
+        return
+
+    groups = _group_receivables_by_customer(fully_settled_txns)
     cache_key = f"settlement_recv_{user['id']}"
     async with _settlement_groups_lock:
         _settlement_groups_cache[cache_key] = {g["party"]: g for g in groups}
         _evict_cache(_settlement_groups_cache)
 
     total_amount = sum(g["total"] for g in groups)
-    total_remaining = sum(g["remaining"] for g in groups)
-    total_paid = total_amount - total_remaining
     total_items = sum(g["count"] for g in groups)
     total_customers = len(groups)
 
     summary = f"📊 {SETTLEMENT_RECV_TITLE}\n\n"
-    summary += f"💰 مجموع طلب: {format_amount(total_amount)} تومان\n"
-    summary += f"💰 مجموع دریافتی: {format_amount(total_paid)} تومان\n"
-    if total_remaining > 0:
-        pct = int((total_paid / total_amount) * 100) if total_amount > 0 else 0
-        summary += f"💰 مجموع باقی‌مانده: {format_amount(total_remaining)} تومان\n"
-        summary += f"📊 درصد تسویه: {pct}%\n"
-    else:
-        summary += f"🟢 کاملاً تسویه شده\n"
+    summary += f"💰 مجموع طلب تسویه شده: {format_amount(total_amount)} تومان\n"
+    summary += f"🟢 کاملاً تسویه شده\n"
     summary += f"👥 {total_customers} مشتری | 📌 {total_items} مورد"
 
     await callback.message.answer(summary)
 
     buttons_data = []
     for g in groups:
-        paid = g["total"] - g["remaining"]
-        if g["remaining"] <= 0:
-            pct = 100
-            label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
-        elif paid > 0:
-            pct = int((paid / g["total"]) * 100) if g["total"] > 0 else 0
-            label = f"🟡 {g['party']} | {format_amount(paid)}/{format_amount(g['total'])} تومان ({pct}%) ({g['count']} مورد)"
-        else:
-            label = f"🔴 {g['party']} | {format_amount(g['total'])} تومان (0%) ({g['count']} مورد)"
+        label = f"🟢 {g['party']} | {format_amount(g['total'])} تومان (100%) ({g['count']} مورد)"
         safe_key = g["party"].replace(":", "_")
         short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({

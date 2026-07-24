@@ -85,7 +85,7 @@ async def export_transactions_excel(
     )
     
     # Headers
-    headers = ["ردیف", "نوع", "مبلغ (تومان)", "دسته‌بندی", "توضیحات", "تاریخ", "ساعت", "طرف حساب", "وضعیت"]
+    headers = ["ردیف", "طرف حساب", "نوع", "مبلغ (تومان)", "دسته‌بندی", "توضیحات", "تاریخ", "ساعت", "وضعیت"]
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = header_font
@@ -104,13 +104,13 @@ async def export_transactions_excel(
     for row_idx, txn in enumerate(transactions, 2):
         data = [
             row_idx - 1,
+            txn.get("party_name") or "-",
             type_names.get(txn["transaction_type"], txn["transaction_type"]),
             f"{txn["amount"]:,.0f}",
             txn.get("category") or "-",
             txn.get("description") or "-",
             txn["jalali_date"],
             txn["jalali_time"],
-            txn.get("party_name") or "-",
             "تسویه شده" if txn.get("is_settled", False) else "جاری"
         ]
         for col, value in enumerate(data, 1):
@@ -121,7 +121,7 @@ async def export_transactions_excel(
     
     # Adjust column widths
     from openpyxl.utils import get_column_letter
-    column_widths = [6, 14, 18, 16, 30, 14, 10, 20, 12]
+    column_widths = [6, 20, 14, 18, 16, 30, 14, 10, 12]
     for i, width in enumerate(column_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
     
@@ -187,7 +187,7 @@ async def export_transactions_pdf(
     }
     
     table_data = [
-        ["ردیف", "نوع", "مبلغ", "تاریخ", "ساعت", "توضیحات"]
+        ["ردیف", "طرف حساب", "نوع", "مبلغ", "دسته‌بندی", "توضیحات", "تاریخ", "ساعت", "وضعیت"]
     ]
     
     for idx, txn in enumerate(transactions, 1):
@@ -196,15 +196,18 @@ async def export_transactions_pdf(
         desc = (txn.get("description") or "")[:30]
         table_data.append([
             str(idx),
+            txn.get("party_name") or "-",
             t_type,
             amount,
+            txn.get("category") or "-",
+            desc,
             txn["jalali_date"],
             txn["jalali_time"],
-            desc
+            "تسویه شده" if txn.get("is_settled", False) else "جاری"
         ])
     
     # Style
-    table = Table(table_data, colWidths=[40, 60, 100, 80, 60, 200])
+    table = Table(table_data, colWidths=[30, 100, 50, 80, 70, 140, 65, 50, 60])
     table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), font_name),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
