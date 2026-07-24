@@ -632,6 +632,13 @@ def edit_field_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🏷 دسته‌بندی", callback_data="edit_field:category")
     )
     builder.row(
+        InlineKeyboardButton(text="💳 شماره کارت", callback_data="edit_field:card_number"),
+        InlineKeyboardButton(text="🏦 شبا", callback_data="edit_field:sheba")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🏛 بانک", callback_data="edit_field:bank_name")
+    )
+    builder.row(
         InlineKeyboardButton(text="✅ تأیید و ذخیره", callback_data="edit_field:save")
     )
     return builder.as_markup()
@@ -1214,6 +1221,7 @@ def debt_payments_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
         buttons.append(InlineKeyboardButton(text="📩 پیامک", callback_data=f"debt_sms:{txn_id}"))
     if buttons:
         builder.row(*buttons)
+    builder.row(InlineKeyboardButton(text="✏️ ویرایش", callback_data=f"edit_debt:{txn_id}"))
     builder.row(InlineKeyboardButton(text="📜 تاریخچه پرداخت", callback_data=f"debt_payment_history:{txn_id}"))
     builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"dvp_bi:{cache_key}:{safe_party}"))
     return builder.as_markup()
@@ -1243,6 +1251,7 @@ def recv_payments_detail_keyboard(txn_id: int, cache_key: str, safe_party: str,
         buttons.append(InlineKeyboardButton(text="📩 پیامک", callback_data=f"recv_sms:{txn_id}"))
     if buttons:
         builder.row(*buttons)
+    builder.row(InlineKeyboardButton(text="✏️ ویرایش", callback_data=f"edit_receivable:{txn_id}"))
     builder.row(InlineKeyboardButton(text="📜 تاریخچه دریافت", callback_data=f"receivable_payment_history:{txn_id}"))
     builder.row(InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"rvp_bi:{cache_key}:{safe_party}"))
     return builder.as_markup()

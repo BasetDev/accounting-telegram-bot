@@ -275,6 +275,7 @@ BOT ENTRY POINTS
 │   │       ├── Full debt info + payment history
 │   │       ├── [📸 عکس] / [📸 رسید پرداخت]  (if photos exist)
 │   │       ├── [📩 پیامک]  (if payment info exists)
+│   │       ├── [✏️ ویرایش]  [edit_debt:{txn_id}]
 │   │       ├── [📜 تاریخچه پرداخت]
 │   │       └── [🔙 بازگشت به لیست]  [dvp_bi:{cache_key}:{safe_party}] → Level 2
 │   │
@@ -473,6 +474,7 @@ BOT ENTRY POINTS
 │   │       ├── Full receivable info + collection history
 │   │       ├── [📸 عکس] / [📸 رسید دریافت]  (if photos exist)
 │   │       ├── [📩 پیامک]  (if payment info exists)
+│   │       ├── [✏️ ویرایش]  [edit_receivable:{txn_id}]
 │   │       ├── [📜 تاریخچه دریافت]
 │   │       └── [🔙 بازگشت به لیست]  [rvp_bi:{cache_key}:{safe_party}] → Level 2
 │   │
@@ -706,14 +708,34 @@ SHARED INLINE ACTIONS (available on debt/receivable list items)
 ✏️ ویرایش [edit_debt:{txn_id}] / [edit_receivable:{txn_id}]
     └── Edit Field Selection (inline):
         ├── 💰 مبلغ         [edit_field:amount]
+        │   └── Input new amount → Back to field selection
         ├── 👤 طرف حساب      [edit_field:party]
+        │   └── Input new party name → Back to field selection
         ├── 📝 توضیحات       [edit_field:description]
+        │   └── Input new description → Back to field selection
         ├── 📅 سررسید        [edit_field:due_date]
+        │   └── Input new date (YYYY/MM/DD) or 📅 امروز → Back to field selection
+        ├── 📸 عکس           [edit_field:photo]
+        │   ├── 🗑 حذف عکس         (remove existing photo)
+        │   ├── ⏭️ بدون تغییر       (keep current photo)
+        │   ├── Send new photo      (replace existing photo)
+        │   └── ❌ انصراف / 🔙 بازگشت به منو
         ├── 🏷 دسته‌بندی      [edit_field:category]
-        │   └── Category → Subcategory selection (same as registration)
+        │   ├── Category selection [debt_cat:{cat}] / [recv_cat:{cat}]
+        │   │   ├── 🏢 کسب‌وکار → Subcategory selection
+        │   │   ├── 👤 شخصی → Subcategory selection
+        │   │   └── سایر → Direct save
+        │   └── Subcategory selection [debt_sub:{sub}] / [recv_sub:{sub}]
+        │       └── [🔙 بازگشت] → Back to category
+        ├── 💳 شماره کارت    [edit_field:card_number]
+        │   └── Input 16-digit card number or ⏭️ رد کردن → Back to field selection
+        ├── 🏦 شبا           [edit_field:sheba]
+        │   └── Input 24-digit sheba (without IR) or ⏭️ رد کردن → Back to field selection
+        ├── 🏛 بانک          [edit_field:bank_name]
+        │   └── Input bank name or ⏭️ رد کردن → Back to field selection
         └── ✅ تأیید و ذخیره  [edit_field:save]
             └── Confirmation (inline)
-                ├── ✅ تأیید  [confirm_yes] → Save → Main Menu
+                ├── ✅ تأیید  [confirm_yes] → Save to MongoDB → Main Menu
                 └── ❌ رد     [confirm_no]  → Cancel → Main Menu
 
 🗑 حذف [delete_debt:{txn_id}] / [delete_receivable:{txn_id}]

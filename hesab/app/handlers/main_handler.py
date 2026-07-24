@@ -245,7 +245,11 @@ class DebtEditForm(StatesGroup):
     party = State()
     description = State()
     due_date = State()
+    jalali_date = State()
     photo = State()
+    card_number = State()
+    sheba = State()
+    bank_name = State()
     confirm = State()
     delete_confirm = State()
 
@@ -255,7 +259,11 @@ class ReceivableEditForm(StatesGroup):
     party = State()
     description = State()
     due_date = State()
+    jalali_date = State()
     photo = State()
+    card_number = State()
+    sheba = State()
+    bank_name = State()
     confirm = State()
     delete_confirm = State()
 
@@ -1680,9 +1688,14 @@ async def _start_edit_by_id(target_id: int, user_id: int, state: FSMContext, edi
         description=txn["description"] or "",
         due_date=txn["due_jalali_date"] or "",
         due_time=txn["due_jalali_time"] or "",
+        jalali_date=txn["jalali_date"] or "",
+        jalali_time=txn["jalali_time"] or "",
         category=txn["category"] or "",
         subcategory=txn["subcategory"] or "",
         photo_path=txn["photo_path"],
+        card_number=txn["card_number"] or "",
+        sheba=txn["sheba"] or "",
+        bank_name=txn["bank_name"] or "",
         edit_type=expected_type,
     )
         
@@ -1690,18 +1703,28 @@ async def _start_edit_by_id(target_id: int, user_id: int, state: FSMContext, edi
     due_display = txn["due_jalali_date"] or '-'
     if txn["due_jalali_time"]:
         due_display += f" ساعت {txn["due_jalali_time"]}"
+    date_display = txn["jalali_date"] or '-'
+    if txn["jalali_time"]:
+        date_display += f" ساعت {txn["jalali_time"]}"
     cat_display = txn["category"] or '-'
     if txn["subcategory"]:
         cat_display += f" / {txn["subcategory"]}"
     photo_display = "✅ دارد" if txn["photo_path"] else "❌ ندارد"
+    card_display = txn["card_number"] or '-'
+    sheba_display = txn["sheba"] or '-'
+    bank_display = txn["bank_name"] or '-'
     summary = (
         f"✏️ ویرایش {text_prefix} (شناسه: {txn["id"]})\n\n"
         f"🏷 دسته: {cat_display}\n"
         f"💰 مبلغ فعلی: {format_amount(txn["amount"])} تومان\n"
         f"👤 طرف حساب: {txn["party_name"] or '-'}\n"
         f"📝 توضیحات: {txn["description"] or '-'}\n"
+        f"📅 تاریخ: {date_display}\n"
         f"📅 سررسید: {due_display}\n"
-        f"📸 عکس: {photo_display}\n\n"
+        f"📸 عکس: {photo_display}\n"
+        f"💳 کارت: {card_display}\n"
+        f"🏦 شبا: {sheba_display}\n"
+        f"🏛 بانک: {bank_display}\n\n"
         f"فیلدی که می‌خواهید ویرایش کنید را انتخاب کنید:"
     )
         
@@ -1755,18 +1778,28 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
         due_display = data['due_date'] or '-'
         if data.get('due_time'):
             due_display += f" ساعت {data['due_time']}"
+        date_display = data.get('jalali_date') or '-'
+        if data.get('jalali_time'):
+            date_display += f" ساعت {data['jalali_time']}"
         cat_display = data.get('category') or '-'
         if data.get('subcategory'):
             cat_display += f" / {data['subcategory']}"
         photo_display = "✅ دارد" if data.get('photo_path') else "❌ ندارد"
+        card_display = data.get('card_number') or '-'
+        sheba_display = data.get('sheba') or '-'
+        bank_display = data.get('bank_name') or '-'
         text = (
             f"✏️ خلاصه ویرایش:\n\n"
             f"🏷 دسته: {cat_display}\n"
             f"💰 مبلغ: {format_amount(data['amount'])} تومان\n"
             f"👤 طرف حساب: {data['party'] or '-'}\n"
             f"📝 توضیحات: {data['description'] or '-'}\n"
+            f"📅 تاریخ: {date_display}\n"
             f"📅 سررسید: {due_display}\n"
-            f"📸 عکس: {photo_display}\n\n"
+            f"📸 عکس: {photo_display}\n"
+            f"💳 کارت: {card_display}\n"
+            f"🏦 شبا: {sheba_display}\n"
+            f"🏛 بانک: {bank_display}\n\n"
             f"آیا تأیید می‌کنید؟"
         )
         await callback.message.edit_text(text, reply_markup=confirm_keyboard())
@@ -1826,11 +1859,18 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
     due_display = data['due_date'] or '-'
     if data.get('due_time'):
         due_display += f" ساعت {data['due_time']}"
+    date_display = data.get('jalali_date') or '-'
+    if data.get('jalali_time'):
+        date_display += f" ساعت {data['jalali_time']}"
     field_prompts = {
         "amount": f"💰 مبلغ جدید را وارد کنید:\n(مبلغ فعلی: {format_amount(data['amount'])} تومان)\n\nبرای عدم تغییر، - را وارد کنید.",
         "party": f"👤 نام طرف حساب جدید را وارد کنید:\n(مقدار فعلی: {data['party'] or '-'})\n\nبرای عدم تغییر، - را وارد کنید.",
         "description": f"📝 توضیحات جدید را وارد کنید:\n(مقدار فعلی: {data['description'] or '-'})\n\nبرای عدم تغییر، - را وارد کنید.",
         "due_date": f"📅 تاریخ سررسید جدید را وارد کنید (فرمت: YYYY/MM/DD):\n(مقدار فعلی: {due_display})\n\nبرای عدم تغییر، - را وارد کنید.\n📅 امروز برای تنظیم سررسید به امروز.",
+        "jalali_date": f"📅 تاریخ پرداخت جدید را وارد کنید (فرمت: YYYY/MM/DD):\n(مقدار فعلی: {date_display})\n\nبرای عدم تغییر، - را وارد کنید.\n📅 امروز برای تنظیم تاریخ به امروز.",
+        "card_number": f"💳 شماره کارت جدید را وارد کنید:\n(مقدار فعلی: {data.get('card_number') or '-'})\n\nبرای عدم تغییر، - را وارد کنید.\n⏭️ رد کردن برای حذف.",
+        "sheba": f"🏦 شماره شبا جدید را وارد کنید:\n(مقدار فعلی: {data.get('sheba') or '-'})\n\nبرای عدم تغییر، - را وارد کنید.\n⏭️ رد کردن برای حذف.",
+        "bank_name": f"🏛 نام بانک جدید را وارد کنید:\n(مقدار فعلی: {data.get('bank_name') or '-'})\n\nبرای عدم تغییر، - را وارد کنید.\n⏭️ رد کردن برای حذف.",
     }
     
     state_map = {
@@ -1838,6 +1878,10 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
         "party": form_class.party,
         "description": form_class.description,
         "due_date": form_class.due_date,
+        "jalali_date": form_class.jalali_date,
+        "card_number": form_class.card_number,
+        "sheba": form_class.sheba,
+        "bank_name": form_class.bank_name,
     }
     
     await state.set_state(state_map[field])
@@ -1845,7 +1889,7 @@ async def edit_field_selected(callback: CallbackQuery, state: FSMContext):
     # Remove inline keyboard from current message
     await callback.message.edit_text(callback.message.text, reply_markup=None)
     # Send new message with the reply keyboard
-    if field == "due_date":
+    if field in ["due_date", "jalali_date"]:
         await callback.message.answer(field_prompts[field], reply_markup=due_date_keyboard())
     else:
         await callback.message.answer(field_prompts[field], reply_markup=cancel_back_menu())
@@ -1967,6 +2011,133 @@ async def edit_due_date_handler(message: Message, state: FSMContext):
     data = await state.get_data()
     await message.answer(
         f"✅ سررسید ثبت شد.\n\nفیلد بعدی را انتخاب کنید:",
+        reply_markup=edit_field_keyboard()
+    )
+    edit_type = data.get("edit_type", "debt")
+    form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
+    await state.set_state(form_class.edit_id)
+
+@router.message(DebtEditForm.jalali_date)
+@router.message(ReceivableEditForm.jalali_date)
+async def edit_jalali_date_handler(message: Message, state: FSMContext):
+    """Handle payment/receipt date input for edit."""
+    if message.text == "❌ انصراف":
+        await state.clear()
+        await message.answer(CANCELED, reply_markup=main_menu())
+        return
+    if message.text == "🔙 بازگشت به منو":
+        await state.clear()
+        await message.answer(BACK_TEXT, reply_markup=main_menu())
+        return
+    
+    if message.text == "📅 امروز":
+        await state.update_data(jalali_date=get_jalali_date(), jalali_time=get_jalali_time())
+    elif message.text not in ["-", "0"]:
+        if not re.match(r"^\d{4}/\d{2}/\d{2}$", message.text):
+            await message.answer(INVALID_DATE)
+            return
+        try:
+            parts = message.text.split("/")
+            jdatetime.date(int(parts[0]), int(parts[1]), int(parts[2]))
+        except (ValueError, IndexError):
+            await message.answer(INVALID_DATE)
+            return
+        await state.update_data(jalali_date=message.text, jalali_time=None)
+    
+    data = await state.get_data()
+    await message.answer(
+        f"✅ تاریخ پرداخت ثبت شد.\n\nفیلد بعدی را انتخاب کنید:",
+        reply_markup=edit_field_keyboard()
+    )
+    edit_type = data.get("edit_type", "debt")
+    form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
+    await state.set_state(form_class.edit_id)
+
+@router.message(DebtEditForm.card_number)
+@router.message(ReceivableEditForm.card_number)
+async def edit_card_number_handler(message: Message, state: FSMContext):
+    """Handle card number input for edit."""
+    if message.text == "❌ انصراف":
+        await state.clear()
+        await message.answer(CANCELED, reply_markup=main_menu())
+        return
+    if message.text == "🔙 بازگشت به منو":
+        await state.clear()
+        await message.answer(BACK_TEXT, reply_markup=main_menu())
+        return
+    
+    if message.text == "⏭️ رد کردن":
+        await state.update_data(card_number="")
+    elif message.text not in ["-", "0"]:
+        card_number = message.text.replace(" ", "").replace("-", "")
+        if not card_number.isdigit() or len(card_number) != 16:
+            await message.answer(CARD_VALID_ERROR_16)
+            return
+        await state.update_data(card_number=card_number)
+    
+    data = await state.get_data()
+    await message.answer(
+        f"✅ شماره کارت ثبت شد.\n\nفیلد بعدی را انتخاب کنید:",
+        reply_markup=edit_field_keyboard()
+    )
+    edit_type = data.get("edit_type", "debt")
+    form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
+    await state.set_state(form_class.edit_id)
+
+@router.message(DebtEditForm.sheba)
+@router.message(ReceivableEditForm.sheba)
+async def edit_sheba_handler(message: Message, state: FSMContext):
+    """Handle sheba input for edit."""
+    if message.text == "❌ انصراف":
+        await state.clear()
+        await message.answer(CANCELED, reply_markup=main_menu())
+        return
+    if message.text == "🔙 بازگشت به منو":
+        await state.clear()
+        await message.answer(BACK_TEXT, reply_markup=main_menu())
+        return
+    
+    if message.text == "⏭️ رد کردن":
+        await state.update_data(sheba="")
+    elif message.text not in ["-", "0"]:
+        sheba_digits = message.text.replace(" ", "").replace("-", "")
+        if sheba_digits.upper().startswith("IR"):
+            sheba_digits = sheba_digits[2:]
+        if not sheba_digits.isdigit() or len(sheba_digits) != 24:
+            await message.answer(CARD_VALID_ERROR_SHEBA)
+            return
+        await state.update_data(sheba=f"IR{sheba_digits}")
+    
+    data = await state.get_data()
+    await message.answer(
+        f"✅ شبا ثبت شد.\n\nفیلد بعدی را انتخاب کنید:",
+        reply_markup=edit_field_keyboard()
+    )
+    edit_type = data.get("edit_type", "debt")
+    form_class = DebtEditForm if edit_type == "debt" else ReceivableEditForm
+    await state.set_state(form_class.edit_id)
+
+@router.message(DebtEditForm.bank_name)
+@router.message(ReceivableEditForm.bank_name)
+async def edit_bank_name_handler(message: Message, state: FSMContext):
+    """Handle bank name input for edit."""
+    if message.text == "❌ انصراف":
+        await state.clear()
+        await message.answer(CANCELED, reply_markup=main_menu())
+        return
+    if message.text == "🔙 بازگشت به منو":
+        await state.clear()
+        await message.answer(BACK_TEXT, reply_markup=main_menu())
+        return
+    
+    if message.text == "⏭️ رد کردن":
+        await state.update_data(bank_name="")
+    elif message.text not in ["-", "0"]:
+        await state.update_data(bank_name=message.text)
+    
+    data = await state.get_data()
+    await message.answer(
+        f"✅ نام بانک ثبت شد.\n\nفیلد بعدی را انتخاب کنید:",
         reply_markup=edit_field_keyboard()
     )
     edit_type = data.get("edit_type", "debt")
@@ -2192,10 +2363,20 @@ async def _process_edit_confirm(callback: CallbackQuery, state: FSMContext, text
                 'description': data['description'],
                 'due_jalali_date': data['due_date'],
                 'due_jalali_time': data.get('due_time'),
+                'jalali_date': data.get('jalali_date'),
+                'jalali_time': data.get('jalali_time'),
                 'category': data.get('category'),
                 'subcategory': data.get('subcategory'),
                 'photo_path': data.get('photo_path'),
+                'card_number': data.get('card_number') or None,
+                'sheba': data.get('sheba') or None,
+                'bank_name': data.get('bank_name') or None,
             }
+            
+            # Build jalali_full if date is provided
+            if data.get('jalali_date'):
+                jalali_time = data.get('jalali_time') or '00:00:00'
+                update_kwargs['jalali_full'] = f"{data['jalali_date']} - {jalali_time}"
             
             TransactionRepository.update( data['edit_id'], **update_kwargs)
             logger.info(f"{text_type} updated: {data['edit_id']} by user {user["telegram_id"]}")
