@@ -309,7 +309,7 @@ BOT ENTRY POINTS
 │   │   ├── Level 1 — Customer Overview
 │   │   │   ├── Summary (total amount, total paid, remaining, settlement rate)
 │   │   │   ├── 👤 {party} | {paid}/{total} تومان ({pct}%)  [stl_cust:{short_id}]  (per customer)
-│   │   │   └── [🔙 بازگشت]  [debt_view_payments] → Debt Submenu
+│   │   │   └── [🔙 بازگشت]  [debt_settled_cat] → Debt Submenu
 │   │   ├── Level 2 — Customer Settlement List
 │   │   │   ├── Customer summary
 │   │   │   ├── 🟢/🟡 #{id} | {paid} از {total} تومان ({pct}%)  [stl_item:{txn_id}]  (per debt)

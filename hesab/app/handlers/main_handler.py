@@ -6726,7 +6726,7 @@ async def settlement_debt_list(callback: CallbackQuery):
 
     await callback.message.answer(
         "👤 مشتری مورد نظر را انتخاب کنید:",
-        reply_markup=settlement_customer_keyboard(buttons_data, "debt_view_payments")
+        reply_markup=settlement_customer_keyboard(buttons_data, "debt_settled_cat")
     )
     await safe_callback_answer(callback)
 
@@ -7032,7 +7032,7 @@ async def settlement_back_to_customers(callback: CallbackQuery):
             "callback_data": f"stl_cust:{short_id}"
         })
 
-    back_cb = "debt_view_payments" if txn_type == "debt" else "receivable_settled_cat"
+    back_cb = "debt_settled_cat" if txn_type == "debt" else "receivable_settled_cat"
     await callback.message.edit_text(summary)
     await callback.message.answer(
         "👤 مشتری مورد نظر را انتخاب کنید:",
@@ -7362,7 +7362,7 @@ async def _send_recv_report(callback: CallbackQuery, report_type: str):
         avg_receivable = (total_amount / total) if total > 0 else 0
 
         total_paid_amount = 0
-        for t in settled:
+        for t in all_receivables:
             payments = PaymentRepository.get_by_transaction(t["id"])
             total_paid_amount += sum(p["amount"] for p in payments) if payments else 0
 
@@ -7534,6 +7534,7 @@ async def _send_recv_report(callback: CallbackQuery, report_type: str):
     cache_key = f"recv_rpt_{user['id']}_{report_type}"
     async with _recv_rpt_lock:
         _recv_rpt_cache[cache_key] = {"txns": export_txns, "report_type": report_type}
+        _evict_cache(_recv_rpt_cache)
 
     if not report_text:
         report_text = RECV_REPORT_EMPTY

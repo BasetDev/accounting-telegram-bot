@@ -11,3 +11,64 @@ INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_
 INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx
 INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_settled_1405-05-03.xlsx
 INFO: Excel report exported: /home/bac/New folder/New/hesab/exports/debt_report_summary_1405-05-03.xlsx
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+Sleep for 1.000000 seconds and try again... (tryings = 0, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+Sleep for 1.262053 seconds and try again... (tryings = 1, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+Sleep for 1.569414 seconds and try again... (tryings = 2, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - Request timeout error
+Sleep for 1.950807 seconds and try again... (tryings = 3, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorError: Cannot connect to host api.telegram.org:443 ssl:default [None]
+Sleep for 2.570260 seconds and try again... (tryings = 4, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorError: Cannot connect to host api.telegram.org:443 ssl:default [None]
+Sleep for 3.356160 seconds and try again... (tryings = 5, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.378728 seconds and try again... (tryings = 6, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.299846 seconds and try again... (tryings = 7, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.012035 seconds and try again... (tryings = 8, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.140845 seconds and try again... (tryings = 9, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.998132 seconds and try again... (tryings = 10, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.748416 seconds and try again... (tryings = 11, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.245105 seconds and try again... (tryings = 12, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.992107 seconds and try again... (tryings = 13, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.011231 seconds and try again... (tryings = 14, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.922489 seconds and try again... (tryings = 15, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.008229 seconds and try again... (tryings = 16, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.021354 seconds and try again... (tryings = 17, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.995739 seconds and try again... (tryings = 18, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.141828 seconds and try again... (tryings = 19, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.010552 seconds and try again... (tryings = 20, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.969032 seconds and try again... (tryings = 21, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.023972 seconds and try again... (tryings = 22, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.906097 seconds and try again... (tryings = 23, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.900512 seconds and try again... (tryings = 24, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.890631 seconds and try again... (tryings = 25, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.989856 seconds and try again... (tryings = 26, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 4.896176 seconds and try again... (tryings = 27, bot id = 8918030522)
+Failed to fetch updates - TelegramNetworkError: HTTP Client says - ClientConnectorDNSError: Cannot connect to host api.telegram.org:443 ssl:default [Temporary failure in name resolution]
+Sleep for 5.118925 seconds and try again... (tryings = 28, bot id = 8918030522)
+                                                                                                                                                                                                                                                                           
