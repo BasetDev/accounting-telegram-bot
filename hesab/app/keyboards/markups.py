@@ -256,13 +256,74 @@ def backup_menu() -> InlineKeyboardMarkup:
     """Backup options."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="📦 ایجاد پشتیبان", callback_data="backup_create"),
+        InlineKeyboardButton(text="📦 پشتیبان کامل", callback_data="backup_create_full"),
+        InlineKeyboardButton(text="🗄 پشتیبان دیتابیس", callback_data="backup_create_db")
     )
     builder.row(
-        InlineKeyboardButton(text="🔄 بازیابی پشتیبان", callback_data="backup_restore"),
+        InlineKeyboardButton(text="🖼 پشتیبان رسانه", callback_data="backup_create_media"),
+        InlineKeyboardButton(text="📋 لیست پشتیبان‌ها", callback_data="backup_list")
     )
     builder.row(
-        InlineKeyboardButton(text="📋 لیست پشتیبان‌ها", callback_data="backup_list"),
+        InlineKeyboardButton(text="🔄 بازیابی", callback_data="backup_restore"),
+        InlineKeyboardButton(text="📊 آمار پشتیبان‌ها", callback_data="backup_stats")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🧹 پاکسازی قدیمی‌ها", callback_data="backup_cleanup")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="back_to_menu")
+    )
+    return builder.as_markup()
+
+
+def backup_list_keyboard(backups: list) -> InlineKeyboardMarkup:
+    """Keyboard for backup list with actions per backup."""
+    builder = InlineKeyboardBuilder()
+    for b in backups[:10]:
+        size_kb = b["file_size"] / 1024
+        label = f"📦 {b['jalali_date']} ({size_kb:.0f}KB)"
+        builder.row(
+            InlineKeyboardButton(text=label, callback_data=f"backup_info:{b['filename']}"),
+        )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت", callback_data="backup_menu_back")
+    )
+    return builder.as_markup()
+
+
+def backup_action_keyboard(filename: str) -> InlineKeyboardMarkup:
+    """Action keyboard for a specific backup."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="⬇️ دانلود", callback_data=f"backup_download:{filename}"),
+        InlineKeyboardButton(text="🔍 اعتبارسنجی", callback_data=f"backup_verify:{filename}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔄 بازیابی", callback_data=f"backup_restore_file:{filename}"),
+        InlineKeyboardButton(text="🗑 حذف", callback_data=f"backup_delete:{filename}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data="backup_list")
+    )
+    return builder.as_markup()
+
+
+def backup_restore_confirm_keyboard(filename: str) -> InlineKeyboardMarkup:
+    """Confirmation keyboard for restore."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ بله، بازیابی شود", callback_data=f"backup_restore_confirm:{filename}"),
+        InlineKeyboardButton(text="❌ انصراف", callback_data="backup_list")
+    )
+    return builder.as_markup()
+
+
+def backup_delete_confirm_keyboard(filename: str) -> InlineKeyboardMarkup:
+    """Confirmation keyboard for delete."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ بله، حذف شود", callback_data=f"backup_delete_confirm:{filename}"),
+        InlineKeyboardButton(text="❌ انصراف", callback_data=f"backup_info:{filename}")
     )
     return builder.as_markup()
 

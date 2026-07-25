@@ -119,8 +119,11 @@ ReminderRepository
 └── mark_sent(reminder_id)
 
 BackupRepository
-├── create(user_id, filename, file_size, jalali_date, jalali_time)
-└── get_recent(limit)
+├── create(user_id, filename, file_size, jalali_date, jalali_time, backup_type, collections_count, total_docs)
+├── get_recent(limit)
+├── get_all()
+├── delete(backup_id)
+└── get_by_filename(filename)
 
 ══════════════════════════════════════════════════════════════
 BOT ENTRY POINTS
@@ -762,14 +765,46 @@ BOT ENTRY POINTS
 │
 ├── 💾 پشتیبان‌گیری (Backup) ───────────────────────────────── [Backup Menu - Inline]
 │   │  ┌─ Backup Menu (InlineKeyboardMarkup) ───────────────┐
-│   ├──┤  📦 ایجاد پشتیبان       [backup_create]            │
-│   │  │  🔄 بازیابی پشتیبان     [backup_restore]           │
-│   │  │  📋 لیست پشتیبان‌ها      [backup_list]              │
+│   ├──┤  📦 پشتیبان کامل         [backup_create_full]      │
+│   │  │  🗄 پشتیبان دیتابیس       [backup_create_db]        │
+│   │  │  🖼 پشتیبان رسانه         [backup_create_media]     │
+│   │  │  📋 لیست پشتیبان‌ها        [backup_list]             │
+│   │  │  🔄 بازیابی               [backup_restore]          │
+│   │  │  📊 آمار پشتیبان‌ها        [backup_stats]            │
+│   │  │  🧹 پاکسازی قدیمی‌ها       [backup_cleanup]          │
 │   │  └────────────────────────────────────────────────────┘
 │   │
-│   ├── 📦 ایجاد پشتیبان → Creates backup file → sends as document
-│   ├── 🔄 بازیابی پشتیبان → Shows list of backup files + manual instructions
-│   └── 📋 لیست پشتیبان‌ها → Lists backups (filename, date, size)
+│   ├── 📦 پشتیبان کامل → Exports all collections (8) + media files to ZIP → sends as document
+│   │   └── Includes: users, transactions, payments, customers, card_info, reminders, backups, counters + uploads/
+│   ├── 🗄 پشتیبان دیتابیس → Exports data collections only (no backup records, no media) → sends as document
+│   │   └── Includes: users, transactions, payments, customers, card_info, reminders, counters
+│   ├── 🖼 پشتیبان رسانه → Exports only media files (uploads/) → sends as document
+│   ├── 📋 لیست پشتیبان‌ها → Shows list with action buttons per backup
+│   │   ├── Each backup → Info/Download/Verify/Restore/Delete actions
+│   │   └── [🔙 بازگشت] → Backup Menu
+│   ├── 🔄 بازیابی → Shows backup list for restore selection (restores DB + media)
+│   ├── 📊 آمار پشتیبان‌ها → Shows total count, size, types, media info
+│   ├── 🧹 پاکسازی قدیمی‌ها → Keeps 5 most recent, deletes older backups
+│   │
+│   │  Backup Actions (per file):
+│   │  ├── ⬇️ دانلود        [backup_download:{filename}]
+│   │  ├── 🔍 اعتبارسنجی    [backup_verify:{filename}]
+│   │  ├── 🔄 بازیابی       [backup_restore_file:{filename}] → confirmation
+│   │  └── 🗑 حذف           [backup_delete:{filename}] → confirmation
+│   │
+│   │  ZIP Structure (full backup):
+│   │  ├── metadata.json              # Backup metadata
+│   │  ├── db/users.json              # User profiles
+│   │  ├── db/transactions.json       # All transactions
+│   │  ├── db/payments.json           # Payment records
+│   │  ├── db/customers.json          # Customer database
+│   │  ├── db/card_info.json          # Card/IBAN info
+│   │  ├── db/reminders.json          # Due date reminders
+│   │  ├── db/backups.json            # Backup records
+│   │  ├── db/counters.json           # Auto-increment counters
+│   │  └── media/*.jpg               # Receipt & payment photos
+│   │
+│   └── [🔙 بازگشت به منو]  [back_to_menu] → Main Menu
 │
 └── ⚙️ تنظیمات (Settings) ───────────────────────────────── [Settings Menu]
     │

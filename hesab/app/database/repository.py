@@ -639,7 +639,10 @@ class BackupRepository:
     @staticmethod
     def create(user_id: int, filename: str,
                file_size: int, jalali_date: str,
-               jalali_time: str = None) -> Dict:
+               jalali_time: str = None,
+               backup_type: str = "full",
+               collections_count: int = 0,
+               total_docs: int = 0) -> Dict:
         backups = get_collection("backups")
         backup = create_backup_doc(
             user_id=user_id,
@@ -648,6 +651,9 @@ class BackupRepository:
             jalali_date=jalali_date,
             jalali_time=jalali_time
         )
+        backup["backup_type"] = backup_type
+        backup["collections_count"] = collections_count
+        backup["total_docs"] = total_docs
         backups.insert_one(backup)
         backup.pop("_id", None)
         return backup
@@ -660,6 +666,29 @@ class BackupRepository:
             backup.pop("_id", None)
             result.append(backup)
         return result
+
+    @staticmethod
+    def get_all() -> List[Dict]:
+        backups = get_collection("backups")
+        result = []
+        for backup in backups.find().sort("id", DESCENDING):
+            backup.pop("_id", None)
+            result.append(backup)
+        return result
+
+    @staticmethod
+    def delete(backup_id: int) -> bool:
+        backups = get_collection("backups")
+        result = backups.delete_one({"id": backup_id})
+        return result.deleted_count > 0
+
+    @staticmethod
+    def get_by_filename(filename: str) -> Optional[Dict]:
+        backups = get_collection("backups")
+        backup = backups.find_one({"filename": filename})
+        if backup:
+            backup.pop("_id", None)
+        return backup
 
 
 class PaymentRepository:

@@ -2,7 +2,6 @@
 
 import os
 import re
-import shutil
 import asyncio
 import time
 import jdatetime
@@ -27,6 +26,7 @@ from app.keyboards.markups import (
     customer_menu, customer_skip_menu, report_menu, income_categories, expense_categories,
     confirm_keyboard, due_date_keyboard, party_keyboard, export_menu, backup_menu, settings_menu,
     transaction_type_keyboard,
+    backup_list_keyboard, backup_action_keyboard, backup_restore_confirm_keyboard, backup_delete_confirm_keyboard,
     debt_list_keyboard, receivable_list_keyboard, edit_field_keyboard, edit_photo_keyboard,
     photo_skip_menu, receipt_skip_menu, card_skip_menu, card_menu, card_submenu, card_name_choice_keyboard,
     card_list_keyboard, card_edit_field_keyboard,
@@ -421,6 +421,14 @@ async def cmd_menu(message: Message, state: FSMContext):
     """Handle /menu or back to menu."""
     await state.clear()
     await message.answer(MENU_TEXT, reply_markup=main_menu())
+
+@router.callback_query(F.data == "back_to_menu")
+async def callback_back_to_menu(callback: CallbackQuery, state: FSMContext):
+    """Handle inline back to menu button."""
+    await state.clear()
+    await safe_delete(callback.message)
+    await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
+    await safe_callback_answer(callback)
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
@@ -8803,112 +8811,474 @@ async def search_type_selected(callback: CallbackQuery, state: FSMContext):
 @router.message(Command("backup"))
 async def backup_menu_handler(message: Message):
     """Show backup menu."""
-    await message.answer("💾 پشتیبان‌گیری\n\nاز این بخش می‌توانید از دیتابیس خود پشتیبان تهیه کنید.", reply_markup=backup_menu())
+    await message.answer(BACKUP_MENU_TITLE, reply_markup=backup_menu())
 
-@router.callback_query(F.data == "backup_create")
-async def backup_create(callback: CallbackQuery):
-    """Create database backup."""
-    await callback.message.edit_text("⏳ در حال ایجاد پشتیبان...")
-    
+
+@router.callback_query(F.data == "backup_menu_back")
+async def backup_menu_back(callback: CallbackQuery):
+    """Return to backup menu."""
+    await callback.message.edit_text(BACKUP_MENU_TITLE, reply_markup=backup_menu())
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_create_full")
+async def backup_create_full(callback: CallbackQuery):
+    """Create full backup of all MongoDB collections."""
+    await callback.message.edit_text("⏳ در حال ایجاد پشتیبان کامل...")
+
     try:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        user = UserRepository.get_by_telegram_id(callback.from_user.id)
         if not user:
             await callback.message.edit_text(ACCESS_DENIED)
             await safe_callback_answer(callback)
             return
-        
-        # Ensure backup dir exists
-        os.makedirs(settings.BACKUP_DIR, exist_ok=True)
-        
-        # Check if using SQLite or MongoDB
-        db_url = getattr(settings, 'DATABASE_URL', None)
-        if db_url:
-            # SQLite backup
-            db_path = db_url.replace("sqlite:///", "")
-            backup_filename = f"hesab_backup_{get_jalali_date().replace('/', '-')}_{get_jalali_time().replace(':', '-')}.db"
-            backup_path = os.path.join(settings.BACKUP_DIR, backup_filename)
-            shutil.copy2(db_path, backup_path)
-            file_size = os.path.getsize(backup_path)
-            BackupRepository.create(
-                user_id=user["id"],
-                filename=backup_filename,
-                file_size=file_size,
-                jalali_date=get_jalali_date(),
-                jalali_time=get_jalali_time()
-            )
-            logger.info(f"Backup created: {backup_filename}")
-            document = FSInputFile(backup_path)
-            await callback.message.edit_text(f"{BACKUP_CREATED}\n📦 حجم: {file_size / 1024:.1f} KB")
-            await callback.message.answer_document(
-                document,
-                caption=f"💾 پشتیبان تاریخ {get_jalali_date()} ساعت {get_jalali_time()}"
-            )
-        else:
-            # MongoDB - provide guidance
-            await callback.message.edit_text(
-                "ℹ️ برای پشتیبان‌گیری از MongoDB، لطفاً از ابزار mongodump یا MongoDB Atlas استفاده کنید.\n\n"
-                f"📊 دیتابیس: {settings.MONGO_DB_NAME}\n\n"
-                "برای بازیابی از mongorestore استفاده کنید."
-            )
+
+        from app.services.backup_service import create_full_backup
+        result = create_full_backup()
+
+        # Record in database
+        BackupRepository.create(
+            user_id=user["id"],
+            filename=result["filename"],
+            file_size=result["file_size"],
+            jalali_date=get_jalali_date(),
+            jalali_time=get_jalali_time(),
+            backup_type="full",
+            collections_count=result["collections"],
+            total_docs=result["total_docs"]
+        )
+
+        # Send file to user
+        document = FSInputFile(result["filepath"])
+        size_kb = result["file_size"] / 1024
+        media_str = f"\n🖼 فایل‌های رسانه: {result.get('media_files', 0)}" if result.get('media_files') else ""
+        await callback.message.edit_text(
+            f"{BACKUP_CREATED}\n"
+            f"📦 حجم: {size_kb:.1f} KB\n"
+            f"📊 مجموعه‌ها: {result['collections']}\n"
+            f"📋 اسناد: {result['total_docs']}{media_str}"
+        )
+        await callback.message.answer_document(
+            document,
+            caption=f"💾 پشتیبان کامل | {get_jalali_date()} ساعت {get_jalali_time()}"
+        )
+
     except Exception as e:
-        logger.error(f"Backup error: {e}")
+        logger.error(f"Full backup error: {e}")
         await callback.message.edit_text(BACKUP_ERROR)
-    
+
     await safe_callback_answer(callback)
 
-@router.callback_query(F.data == "backup_restore")
-async def backup_restore(callback: CallbackQuery):
-    """Restore from backup - show list of available backups."""
-    await callback.message.edit_text("🔄 در حال جستجوی پشتیبان‌ها...")
-    
-    if not os.path.exists(settings.BACKUP_DIR):
-        await callback.message.edit_text("📭 هیچ پشتیبان‌گیری انجام نشده است.\n\nابتدا از بخش پشتیبان‌گیری یک نسخه پشتیبان ایجاد کنید.")
-        await safe_callback_answer(callback)
-        return
-    
-    backup_files = sorted([
-        f for f in os.listdir(settings.BACKUP_DIR) if f.endswith('.db')
-    ], reverse=True)
-    
-    if not backup_files:
-        await callback.message.edit_text("📭 هیچ فایل پشتیبان .db یافت نشد.")
-        await safe_callback_answer(callback)
-        return
-    
-    text = "🔄 لیست فایل‌های پشتیبان موجود:\n\n"
-    for i, f in enumerate(backup_files[:10], 1):
-        fpath = os.path.join(settings.BACKUP_DIR, f)
-        fsize = os.path.getsize(fpath)
-        text += f"{i}. 📦 {f}\n   📊 {fsize / 1024:.1f} KB\n\n"
-    
-    text += "⚠️ برای بازیابی، لطفاً به صورت دستی فایل پشتیبان را جایگزین فایل دیتابیس اصلی کنید.\n"
-    db_url = getattr(settings, 'DATABASE_URL', None)
-    if db_url:
-        text += f"📁 مسیر دیتابیس: {db_url.replace('sqlite:///', '')}"
-    else:
-        text += f"📊 دیتابیس: {settings.MONGO_DB_NAME} (MongoDB)"
-    
-    await callback.message.edit_text(text)
+
+@router.callback_query(F.data == "backup_create_media")
+async def backup_create_media(callback: CallbackQuery):
+    """Create media-only backup (uploads/ directories)."""
+    await callback.message.edit_text("⏳ در حال ایجاد پشتیبان رسانه...")
+
+    try:
+        user = UserRepository.get_by_telegram_id(callback.from_user.id)
+        if not user:
+            await callback.message.edit_text(ACCESS_DENIED)
+            await safe_callback_answer(callback)
+            return
+
+        from app.services.backup_service import create_media_backup
+        result = create_media_backup()
+
+        # Record in database
+        BackupRepository.create(
+            user_id=user["id"],
+            filename=result["filename"],
+            file_size=result["file_size"],
+            jalali_date=get_jalali_date(),
+            jalali_time=get_jalali_time(),
+            backup_type="media",
+            collections_count=0,
+            total_docs=0
+        )
+
+        # Send file to user
+        document = FSInputFile(result["filepath"])
+        size_kb = result["file_size"] / 1024
+        await callback.message.edit_text(
+            f"{BACKUP_CREATED}\n"
+            f"📦 حجم: {size_kb:.1f} KB\n"
+            f"🖼 فایل‌های رسانه: {result.get('media_files', 0)}"
+        )
+        await callback.message.answer_document(
+            document,
+            caption=f"💾 پشتیبان رسانه | {get_jalali_date()} ساعت {get_jalali_time()}"
+        )
+
+    except Exception as e:
+        logger.error(f"Media backup error: {e}")
+        await callback.message.edit_text(BACKUP_ERROR)
+
     await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_restore")
+async def backup_restore_menu(callback: CallbackQuery):
+    """Show backup list for restore selection."""
+    try:
+        from app.services.backup_service import list_backup_files
+        backups = list_backup_files()
+
+        if not backups:
+            await callback.message.edit_text(BACKUP_LIST_EMPTY, reply_markup=backup_menu())
+        else:
+            text = "🔄 بازیابی\n\nیک پشتیبان برای بازیابی انتخاب کنید:\n\n"
+            for i, b in enumerate(backups[:10], 1):
+                size_kb = b["file_size"] / 1024
+                btype = b.get("backup_type", "نامشخص")
+                time_str = f" ساعت {b['jalali_time']}" if b.get("jalali_time") else ""
+                media_str = " 🖼" if b.get("has_media") else ""
+                text += f"{i}. 📦 {b.get('jalali_date', 'نامشخص')}{time_str}\n"
+                text += f"   📊 {size_kb:.1f} KB | نوع: {btype}{media_str}\n\n"
+            await callback.message.edit_text(text, reply_markup=backup_list_keyboard(backups[:10]))
+
+    except Exception as e:
+        logger.error(f"Backup restore menu error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_create_db")
+async def backup_create_db(callback: CallbackQuery):
+    """Create database-only backup (no backup records)."""
+    await callback.message.edit_text("⏳ در حال ایجاد پشتیبان دیتابیس...")
+
+    try:
+        user = UserRepository.get_by_telegram_id(callback.from_user.id)
+        if not user:
+            await callback.message.edit_text(ACCESS_DENIED)
+            await safe_callback_answer(callback)
+            return
+
+        from app.services.backup_service import create_db_backup
+        result = create_db_backup()
+
+        # Record in database
+        BackupRepository.create(
+            user_id=user["id"],
+            filename=result["filename"],
+            file_size=result["file_size"],
+            jalali_date=get_jalali_date(),
+            jalali_time=get_jalali_time(),
+            backup_type="database",
+            collections_count=result["collections"],
+            total_docs=result["total_docs"]
+        )
+
+        # Send file to user
+        document = FSInputFile(result["filepath"])
+        size_kb = result["file_size"] / 1024
+        await callback.message.edit_text(
+            f"{BACKUP_CREATED}\n"
+            f"📦 حجم: {size_kb:.1f} KB\n"
+            f"📊 مجموعه‌ها: {result['collections']}\n"
+            f"📋 اسناد: {result['total_docs']}"
+        )
+        await callback.message.answer_document(
+            document,
+            caption=f"💾 پشتیبان دیتابیس | {get_jalali_date()} ساعت {get_jalali_time()}"
+        )
+
+    except Exception as e:
+        logger.error(f"DB backup error: {e}")
+        await callback.message.edit_text(BACKUP_ERROR)
+
+    await safe_callback_answer(callback)
+
 
 @router.callback_query(F.data == "backup_list")
 async def backup_list(callback: CallbackQuery):
-    """Show backup list."""
+    """Show backup list with action buttons."""
     try:
-        backups = BackupRepository.get_recent()
+        # Get from database
+        backups = BackupRepository.get_recent(limit=10)
+        # Also scan filesystem for any files not in DB
+        from app.services.backup_service import list_backup_files
+        fs_backups = list_backup_files()
+
+        # Merge: DB records take priority, add filesystem-only files
+        db_filenames = {b["filename"] for b in backups}
+        for fb in fs_backups:
+            if fb["filename"] not in db_filenames:
+                backups.append(fb)
+
         if not backups:
-            await callback.message.edit_text(BACKUP_LIST_EMPTY)
+            await callback.message.edit_text(BACKUP_LIST_EMPTY, reply_markup=backup_menu())
         else:
             text = "📋 لیست پشتیبان‌ها:\n\n"
-            for b in backups:
-                size_str = f"{b.file_size / 1024:.1f} KB" if b.file_size else "نامشخص"
-                time_str = f" ساعت {b.jalali_time}" if b.jalali_time else ""
-                text += f"📦 {b.filename}\n📅 {b.jalali_date}{time_str}\n📊 {size_str}\n\n"
-            await callback.message.edit_text(text)
+            for i, b in enumerate(backups[:10], 1):
+                size_kb = b["file_size"] / 1024
+                btype = b.get("backup_type", "نامشخص")
+                time_str = f" ساعت {b['jalali_time']}" if b.get("jalali_time") else ""
+                text += f"{i}. 📦 {b.get('jalali_date', 'نامشخص')}{time_str}\n"
+                text += f"   📊 {size_kb:.1f} KB | نوع: {btype}\n\n"
+            await callback.message.edit_text(text, reply_markup=backup_list_keyboard(backups[:10]))
+
     except Exception as e:
         logger.error(f"Backup list error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
-    
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("backup_info:"))
+async def backup_info(callback: CallbackQuery):
+    """Show detailed info about a specific backup."""
+    filename = callback.data.split(":", 1)[1]
+
+    try:
+        from app.services.backup_service import get_backup_metadata, verify_backup_integrity
+        filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+        if not os.path.exists(filepath):
+            await callback.message.edit_text("❌ فایل پشتیبان یافت نشد.")
+            await safe_callback_answer(callback)
+            return
+
+        file_size = os.path.getsize(filepath)
+        metadata = get_backup_metadata(filepath)
+
+        text = f"📊 اطلاعات پشتیبان\n━━━━━━━━━━━━━━━━━━\n\n"
+        text += f"📦 نام فایل: {filename}\n"
+        text += f"📊 حجم: {file_size / 1024:.1f} KB\n"
+
+        if metadata:
+            text += f"📅 تاریخ: {metadata.get('jalali_date', '-')}\n"
+            text += f"⏰ ساعت: {metadata.get('jalali_time', '-')}\n"
+            text += f"🗄 نوع: {metadata.get('backup_type', '-')}\n"
+            text += f"📊 مجموعه‌ها: {len(metadata.get('collections', []))}\n"
+            text += f"📋 اسناد: {metadata.get('total_documents', 0)}\n"
+            text += f"💾 دیتابیس: {metadata.get('database', '-')}\n"
+        else:
+            text += "\n⚠️ متاداده یافت نشد (فایل قدیمی)\n"
+
+        await callback.message.edit_text(text, reply_markup=backup_action_keyboard(filename))
+
+    except Exception as e:
+        logger.error(f"Backup info error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("backup_download:"))
+async def backup_download(callback: CallbackQuery):
+    """Download a backup file."""
+    filename = callback.data.split(":", 1)[1]
+    filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+    try:
+        if not os.path.exists(filepath):
+            await callback.message.edit_text("❌ فایل پشتیبان یافت نشد.")
+            await safe_callback_answer(callback)
+            return
+
+        document = FSInputFile(filepath)
+        await callback.message.answer_document(
+            document,
+            caption=f"💾 پشتیبان: {filename}"
+        )
+        await safe_callback_answer(callback)
+
+    except Exception as e:
+        logger.error(f"Backup download error: {e}")
+        await safe_callback_answer(callback, "⚠️ خطا در دانلود فایل.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("backup_verify:"))
+async def backup_verify(callback: CallbackQuery):
+    """Verify backup file integrity."""
+    filename = callback.data.split(":", 1)[1]
+    filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+    try:
+        from app.services.backup_service import verify_backup_integrity
+        result = verify_backup_integrity(filepath)
+
+        if result["valid"]:
+            text = f"{BACKUP_VERIFY_OK}\n\n"
+            text += f"📊 مجموعه‌ها: {result['collections']}\n"
+            text += f"📋 اسناد: {result['total_docs']}"
+            if result.get("media_files"):
+                text += f"\n🖼 فایل‌های رسانه: {result['media_files']}"
+        else:
+            text = f"{BACKUP_VERIFY_FAIL}\n\n"
+            text += "خطاها:\n"
+            for err in result["errors"]:
+                text += f"  ❌ {err}\n"
+
+        await callback.message.edit_text(text, reply_markup=backup_action_keyboard(filename))
+
+    except Exception as e:
+        logger.error(f"Backup verify error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("backup_restore_file:"))
+async def backup_restore_file(callback: CallbackQuery):
+    """Show restore confirmation for a specific backup."""
+    filename = callback.data.split(":", 1)[1]
+    filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+    if not os.path.exists(filepath):
+        await callback.message.edit_text("❌ فایل پشتیبان یافت نشد.")
+        await safe_callback_answer(callback)
+        return
+
+    from app.services.backup_service import get_backup_metadata
+    metadata = get_backup_metadata(filepath)
+
+    text = f"{BACKUP_RESTORE_CONFIRM}\n\n"
+    text += f"📦 فایل: {filename}\n"
+    if metadata:
+        text += f"📅 تاریخ: {metadata.get('jalali_date', '-')}\n"
+        text += f"📋 اسناد: {metadata.get('total_documents', 0)}\n"
+
+    await callback.message.edit_text(text, reply_markup=backup_restore_confirm_keyboard(filename))
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("backup_restore_confirm:"))
+async def backup_restore_confirm(callback: CallbackQuery):
+    """Execute restore from backup."""
+    filename = callback.data.split(":", 1)[1]
+    filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+    await callback.message.edit_text("⏳ در حال بازیابی پشتیبان...")
+
+    try:
+        if not os.path.exists(filepath):
+            await callback.message.edit_text("❌ فایل پشتیبان یافت نشد.")
+            await safe_callback_answer(callback)
+            return
+
+        from app.services.backup_service import restore_from_backup
+        result = restore_from_backup(filepath, drop_existing=True)
+
+        if result["success"]:
+            text = f"{BACKUP_RESTORED}\n\n"
+            text += f"📊 مجموعه‌های بازیابی شده: {result['collections_restored']}\n"
+            text += f"📋 اسناد بازیابی شده: {result['total_docs']}"
+            if result.get("media_restored"):
+                text += f"\n🖼 فایل‌های رسانه بازیابی شده: {result['media_restored']}"
+        else:
+            text = f"❌ خطا در بازیابی:\n"
+            for err in result["errors"]:
+                text += f"  ❌ {err}\n"
+
+        await callback.message.edit_text(text)
+
+    except Exception as e:
+        logger.error(f"Restore error: {e}")
+        await callback.message.edit_text(BACKUP_ERROR)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("backup_delete:"))
+async def backup_delete(callback: CallbackQuery):
+    """Show delete confirmation for a backup."""
+    filename = callback.data.split(":", 1)[1]
+    filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+    if not os.path.exists(filepath):
+        await callback.message.edit_text("❌ فایل پشتیبان یافت نشد.")
+        await safe_callback_answer(callback)
+        return
+
+    file_size = os.path.getsize(filepath)
+    text = f"⚠️ آیا از حذف این پشتیبان اطمینان دارید؟\n\n📦 {filename}\n📊 {file_size / 1024:.1f} KB"
+
+    await callback.message.edit_text(text, reply_markup=backup_delete_confirm_keyboard(filename))
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.startswith("backup_delete_confirm:"))
+async def backup_delete_confirm(callback: CallbackQuery):
+    """Execute backup deletion."""
+    filename = callback.data.split(":", 1)[1]
+    filepath = os.path.join(settings.BACKUP_DIR, filename)
+
+    try:
+        from app.services.backup_service import delete_backup_file
+        if delete_backup_file(filepath):
+            # Also delete from database
+            db_backup = BackupRepository.get_by_filename(filename)
+            if db_backup:
+                BackupRepository.delete(db_backup["id"])
+            await callback.message.edit_text(f"{BACKUP_DELETED}\n📦 {filename}")
+        else:
+            await callback.message.edit_text("❌ خطا در حذف فایل.")
+    except Exception as e:
+        logger.error(f"Backup delete error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_stats")
+async def backup_stats(callback: CallbackQuery):
+    """Show backup statistics."""
+    try:
+        from app.services.backup_service import get_backup_stats
+        stats = get_backup_stats()
+
+        text = f"📊 آمار پشتیبان‌ها\n━━━━━━━━━━━━━━━━━━\n\n"
+        text += f"📦 تعداد کل: {stats['total_backups']}\n"
+        text += f"📊 حجم کل: {stats['total_size'] / 1024:.1f} KB\n"
+
+        if stats["backup_types"]:
+            text += f"\n📋 انواع پشتیبان:\n"
+            for bt, count in stats["backup_types"].items():
+                text += f"  • {bt}: {count} عدد\n"
+
+        if stats.get("backups_with_media"):
+            text += f"\n🖼 پشتیبان‌های دارای رسانه: {stats['backups_with_media']}\n"
+
+        if stats["latest_backup"]:
+            latest = stats["latest_backup"]
+            text += f"\n🕐 آخرین پشتیبان:\n"
+            text += f"  📅 {latest['jalali_date']} ساعت {latest['jalali_time']}\n"
+            text += f"  📊 {latest['file_size'] / 1024:.1f} KB\n"
+
+        if stats["total_backups"] == 0:
+            text += "\n📭 هیچ پشتیبانی وجود ندارد."
+
+        await callback.message.edit_text(text, reply_markup=backup_menu())
+
+    except Exception as e:
+        logger.error(f"Backup stats error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_cleanup")
+async def backup_cleanup(callback: CallbackQuery):
+    """Cleanup old backups, keeping the 5 most recent."""
+    try:
+        from app.services.backup_service import cleanup_old_backups
+        deleted = cleanup_old_backups(keep_count=5)
+
+        if deleted > 0:
+            text = f"{BACKUP_CLEANUP_DONE}\n🗑 {deleted} فایل قدیمی حذف شد."
+        else:
+            text = "📭 پشتیبان قدیمی برای حذف وجود ندارد."
+
+        await callback.message.edit_text(text, reply_markup=backup_menu())
+
+    except Exception as e:
+        logger.error(f"Backup cleanup error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
     await safe_callback_answer(callback)
 
 # ==============================
