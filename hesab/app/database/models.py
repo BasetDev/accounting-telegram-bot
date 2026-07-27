@@ -87,6 +87,7 @@ def _create_indexes():
     try:
         # Users collection
         _db.users.create_index("telegram_id", unique=True)
+        _db.users.create_index("id", unique=True)
 
         # Transactions collection
         _db.transactions.create_index("user_id")
@@ -94,23 +95,29 @@ def _create_indexes():
         _db.transactions.create_index([("user_id", 1), ("transaction_type", 1)])
         _db.transactions.create_index([("user_id", 1), ("is_settled", 1)])
         _db.transactions.create_index("customer_id")
+        _db.transactions.create_index("id", unique=True)
 
         # Customers collection
         _db.customers.create_index("user_id")
+        _db.customers.create_index("id", unique=True)
 
         # Card info collection
         _db.card_info.create_index("user_id")
+        _db.card_info.create_index("id", unique=True)
 
         # Reminders collection
         _db.reminders.create_index("user_id")
         _db.reminders.create_index([("is_sent", 1), ("reminder_jalali_date", 1)])
+        _db.reminders.create_index("id", unique=True)
 
         # Backups collection
         _db.backups.create_index("user_id")
+        _db.backups.create_index("id", unique=True)
 
         # Payments collection
         _db.payments.create_index("transaction_id")
         _db.payments.create_index("user_id")
+        _db.payments.create_index("id", unique=True)
 
         # Counters collection (for auto-increment IDs)
         # _id index is created automatically, no need to create it explicitly

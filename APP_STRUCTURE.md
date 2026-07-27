@@ -782,7 +782,13 @@ BOT ENTRY POINTS
 │   ├── 📋 لیست پشتیبان‌ها → Shows list with action buttons per backup
 │   │   ├── Each backup → Info/Download/Verify/Restore/Delete actions
 │   │   └── [🔙 بازگشت] → Backup Menu
-│   ├── 🔄 بازیابی → Shows backup list for restore selection (restores DB + media)
+│   ├── 🔄 بازیابی → Restore options menu:
+│   │   ├── 🔄 بازیابی از سرور [backup_restore_server] → Server backup list → select → confirm → restore
+│   │   └── 📤 بارگذاری فایل [backup_restore_upload] → Upload .zip → validate → confirm → restore
+│   │   └── Cross-bot restore: all data collections + media imported, users merged into one
+│   │   └── Cross-bot merge: primary user (most data) absorbs all others, telegram_id set to new admin
+│   │   └── Cross-bot: backups collection skipped (file references invalid on target), version <2.0 rejected
+│   │   └── Restore order: import data → import media → merge users → recreate indexes → rebuild counters → verify
 │   ├── 📊 آمار پشتیبان‌ها → Shows total count, size, types, media info
 │   ├── 🧹 پاکسازی قدیمی‌ها → Keeps 5 most recent, deletes older backups
 │   │
@@ -1075,6 +1081,10 @@ PaymentForm
 ├── payment_type
 ├── amount
 ├── receipt
+└── confirm
+
+RestoreForm
+├── waiting_for_file
 └── confirm
 
 ══════════════════════════════════════════════════════════════

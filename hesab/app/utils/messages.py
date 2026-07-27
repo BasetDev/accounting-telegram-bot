@@ -549,6 +549,11 @@ BACKUP_VERIFY_OK = "✅ فایل پشتیبان سالم و معتبر است."
 BACKUP_VERIFY_FAIL = "❌ فایل پشتیبان دارای مشکل است."
 BACKUP_RESTORE_CONFIRM = "⚠️ آیا از بازیابی پشتیبان اطمینان دارید؟\n\nاین عملیات تمام داده‌های فعلی را با داده‌های پشتیبان جایگزین می‌کند."
 BACKUP_MENU_TITLE = "💾 پشتیبان‌گیری\n\nاز این بخش می‌توانید از دیتابیس خود پشتیبان تهیه کنید."
+BACKUP_UPLOAD_PROMPT = "📤 لطفاً فایل پشتیبان (.zip) را ارسال کنید.\n\nفایل باید توسط همین ربات ساخته شده باشد."
+BACKUP_UPLOAD_INVALID = "❌ فایل ارسال شده یک فایل پشتیبان معتبر نیست."
+BACKUP_UPLOAD_VALIDATED = "✅ فایل پشتیبان معتبر است.\n\nاطلاعات پشتیبان:"
+BACKUP_RESTORE_FROM_SERVER = "🔄 بازیابی از سرور"
+BACKUP_RESTORE_UPLOAD = "📤 بارگذاری فایل پشتیبان"
 
 # Reminder messages
 REMINDER_DEBT = """🔔 یادآوری بدهی

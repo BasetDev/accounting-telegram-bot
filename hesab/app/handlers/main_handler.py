@@ -27,6 +27,7 @@ from app.keyboards.markups import (
     confirm_keyboard, due_date_keyboard, party_keyboard, export_menu, backup_menu, settings_menu,
     transaction_type_keyboard,
     backup_list_keyboard, backup_action_keyboard, backup_restore_confirm_keyboard, backup_delete_confirm_keyboard,
+    backup_restore_menu_keyboard, backup_upload_confirm_keyboard,
     debt_list_keyboard, receivable_list_keyboard, edit_field_keyboard, edit_photo_keyboard,
     photo_skip_menu, receipt_skip_menu, card_skip_menu, card_menu, card_submenu, card_name_choice_keyboard,
     card_list_keyboard, card_edit_field_keyboard,
@@ -297,6 +298,12 @@ class PaymentForm(StatesGroup):
     payment_type = State()
     amount = State()
     receipt = State()
+    confirm = State()
+
+
+class RestoreForm(StatesGroup):
+    """FSM states for backup restore upload flow."""
+    waiting_for_file = State()
     confirm = State()
 
 # ==============================
@@ -8815,8 +8822,9 @@ async def backup_menu_handler(message: Message):
 
 
 @router.callback_query(F.data == "backup_menu_back")
-async def backup_menu_back(callback: CallbackQuery):
-    """Return to backup menu."""
+async def backup_menu_back(callback: CallbackQuery, state: FSMContext):
+    """Return to backup menu and clear any pending FSM state."""
+    await state.clear()
     await callback.message.edit_text(BACKUP_MENU_TITLE, reply_markup=backup_menu())
     await safe_callback_answer(callback)
 
@@ -8919,7 +8927,20 @@ async def backup_create_media(callback: CallbackQuery):
 
 @router.callback_query(F.data == "backup_restore")
 async def backup_restore_menu(callback: CallbackQuery):
-    """Show backup list for restore selection."""
+    """Show restore options: from server or upload file."""
+    try:
+        text = "🔄 بازیابی پشتیبان\n\nیک روش بازیابی را انتخاب کنید:"
+        await callback.message.edit_text(text, reply_markup=backup_restore_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Backup restore menu error: {e}")
+        await callback.message.edit_text(ERROR_GENERAL)
+
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_restore_server")
+async def backup_restore_server(callback: CallbackQuery):
+    """Show server backup list for restore selection."""
     try:
         from app.services.backup_service import list_backup_files
         backups = list_backup_files()
@@ -8927,7 +8948,7 @@ async def backup_restore_menu(callback: CallbackQuery):
         if not backups:
             await callback.message.edit_text(BACKUP_LIST_EMPTY, reply_markup=backup_menu())
         else:
-            text = "🔄 بازیابی\n\nیک پشتیبان برای بازیابی انتخاب کنید:\n\n"
+            text = "🔄 بازیابی از سرور\n\nیک پشتیبان برای بازیابی انتخاب کنید:\n\n"
             for i, b in enumerate(backups[:10], 1):
                 size_kb = b["file_size"] / 1024
                 btype = b.get("backup_type", "نامشخص")
@@ -8938,9 +8959,196 @@ async def backup_restore_menu(callback: CallbackQuery):
             await callback.message.edit_text(text, reply_markup=backup_list_keyboard(backups[:10]))
 
     except Exception as e:
-        logger.error(f"Backup restore menu error: {e}")
+        logger.error(f"Backup restore server error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
 
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "backup_restore_upload")
+async def backup_restore_upload(callback: CallbackQuery, state: FSMContext):
+    """Start the upload restore flow."""
+    await state.set_state(RestoreForm.waiting_for_file)
+    await callback.message.edit_text(
+        BACKUP_UPLOAD_PROMPT,
+        reply_markup=InlineKeyboardBuilder().row(
+            InlineKeyboardButton(text="❌ انصراف", callback_data="backup_menu_back")
+        ).as_markup()
+    )
+    await safe_callback_answer(callback)
+
+
+@router.message(RestoreForm.waiting_for_file, F.document)
+async def backup_file_received(message: Message, state: FSMContext):
+    """Handle uploaded backup file."""
+    document = message.document
+    
+    # Validate file extension
+    if not document.file_name or not document.file_name.endswith(".zip"):
+        await message.answer(BACKUP_UPLOAD_INVALID + "\n\nفایل باید پسوند .zip داشته باشد.")
+        return
+    
+    # Check file size (max 100MB)
+    if document.file_size and document.file_size > 100 * 1024 * 1024:
+        await message.answer("❌ فایل بسیار بزرگ است. حداکثر اندازه: 100 مگابایت.")
+        return
+    
+    # Download the file
+    status_msg = await message.answer("⏳ در حال دانلود و بررسی فایل...")
+    
+    try:
+        # Create temp dir for upload
+        import tempfile
+        temp_dir = tempfile.mkdtemp()
+        temp_path = os.path.join(temp_dir, document.file_name)
+        
+        # Download file
+        file = await message.bot.get_file(document.file_id)
+        await message.bot.download_file(file.file_path, temp_path)
+        
+        # Validate the backup
+        from app.services.backup_service import validate_uploaded_backup
+        validation = validate_uploaded_backup(temp_path)
+        
+        if not validation["valid"]:
+            # Clean up
+            os.remove(temp_path)
+            os.rmdir(temp_dir)
+            
+            error_text = f"{BACKUP_UPLOAD_INVALID}\n\nخطاها:\n"
+            for err in validation["errors"]:
+                error_text += f"  ❌ {err}\n"
+            await status_msg.edit_text(error_text, reply_markup=backup_menu())
+            await state.clear()
+            return
+        
+        # Store path in state
+        await state.update_data(
+            uploaded_backup_path=temp_path,
+            uploaded_backup_meta=validation["metadata"],
+            uploaded_backup_collections=validation["collections"],
+            uploaded_backup_docs=validation["total_docs"],
+            uploaded_backup_media=validation["media_files"],
+        )
+        
+        # Show backup info
+        meta = validation["metadata"]
+        text = f"{BACKUP_UPLOAD_VALIDATED}\n\n"
+        text += f"📦 نوع: {meta.get('backup_type', 'نامشخص')}\n"
+        text += f"📅 تاریخ: {meta.get('jalali_date', '-')}\n"
+        text += f"⏰ ساعت: {meta.get('jalali_time', '-')}\n"
+        text += f"📊 مجموعه‌ها: {validation['collections']}\n"
+        text += f"📋 اسناد: {validation['total_docs']}\n"
+        if validation["media_files"]:
+            text += f"🖼 فایل‌های رسانه: {validation['media_files']}\n"
+        text += f"💾 دیتابیس: {meta.get('database', '-')}\n"
+        text += f"📌 نسخه: {meta.get('version', '-')}\n"
+        
+        if validation["warnings"]:
+            text += "\n⚠️ هشدارها:\n"
+            for w in validation["warnings"]:
+                text += f"  • {w}\n"
+        
+        text += f"\n{BACKUP_RESTORE_CONFIRM}"
+        
+        await state.set_state(RestoreForm.confirm)
+        await status_msg.edit_text(text, reply_markup=backup_upload_confirm_keyboard())
+        
+    except Exception as e:
+        logger.error(f"Backup file receive error: {e}")
+        # Clean up temp files if they exist
+        try:
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
+            if 'temp_dir' in locals() and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception as cleanup_err:
+            logger.warning(f"Temp cleanup error: {cleanup_err}")
+        await status_msg.edit_text(BACKUP_ERROR)
+        await state.clear()
+
+
+@router.message(RestoreForm.waiting_for_file)
+async def backup_file_wrong_type(message: Message):
+    """Handle non-document messages during upload flow."""
+    await message.answer("❌ لطفاً یک فایل .zip ارسال کنید.")
+
+
+@router.callback_query(F.data == "backup_upload_restore_confirm", RestoreForm.confirm)
+async def backup_upload_restore_confirm(callback: CallbackQuery, state: FSMContext):
+    """Execute restore from uploaded backup file."""
+    data = await state.get_data()
+    temp_path = data.get("uploaded_backup_path")
+    
+    if not temp_path or not os.path.exists(temp_path):
+        await callback.message.edit_text("❌ فایل پشتیبان یافت نشد. لطفاً دوباره تلاش کنید.")
+        await state.clear()
+        await safe_callback_answer(callback)
+        return
+    
+    await callback.message.edit_text("⏳ در حال بازیابی پشتیبان...")
+    
+    try:
+        # Always merge data to the current user so all restored records become visible
+        new_telegram_id = callback.from_user.id
+        
+        from app.services.backup_service import restore_from_backup
+        result = restore_from_backup(
+            temp_path, 
+            drop_existing=True, 
+            remap_paths=True,
+            new_telegram_id=new_telegram_id
+        )
+        
+        # Clean up temp file
+        try:
+            os.remove(temp_path)
+            os.rmdir(os.path.dirname(temp_path))
+        except:
+            pass
+        
+        if result["success"]:
+            text = f"{BACKUP_RESTORED}\n\n"
+            text += f"📊 مجموعه‌های بازیابی شده: {result['collections_restored']}\n"
+            text += f"📋 اسناد بازیابی شده: {result['total_docs']}"
+            if result.get("media_restored"):
+                text += f"\n🖼 فایل‌های رسانه بازیابی شده: {result['media_restored']}"
+            
+            # Clear all in-memory caches so fresh data is loaded from DB
+            _debt_groups_cache.clear()
+            _recv_groups_cache.clear()
+            _card_groups_cache.clear()
+            _settlement_groups_cache.clear()
+            _debt_payments_cache.clear()
+            _recv_payments_cache.clear()
+            _debt_rpt_cache.clear()
+            _recv_rpt_cache.clear()
+            _callback_index.clear()
+            
+            # Show verification results
+            verification = result.get("verification", {})
+            if verification.get("checks"):
+                text += "\n\n🔍 اعتبارسنجی:\n"
+                for check in verification["checks"][:5]:
+                    text += f"  {check}\n"
+            
+            if result.get("warnings"):
+                text += "\n⚠️ هشدارها:\n"
+                for w in result["warnings"][:3]:
+                    text += f"  • {w}\n"
+        else:
+            text = f"❌ خطا در بازیابی:\n"
+            for err in result["errors"]:
+                text += f"  ❌ {err}\n"
+        
+        await callback.message.edit_text(text, reply_markup=backup_menu())
+        
+    except Exception as e:
+        logger.error(f"Upload restore error: {e}")
+        await callback.message.edit_text(BACKUP_ERROR)
+    
+    await state.clear()
     await safe_callback_answer(callback)
 
 
@@ -9113,11 +9321,19 @@ async def backup_verify(callback: CallbackQuery):
             for err in result["errors"]:
                 text += f"  ❌ {err}\n"
 
-        await callback.message.edit_text(text, reply_markup=backup_action_keyboard(filename))
+        try:
+            await callback.message.edit_text(text, reply_markup=backup_action_keyboard(filename))
+        except Exception as edit_err:
+            # Ignore "message not modified" errors
+            if "message is not modified" not in str(edit_err):
+                raise edit_err
 
     except Exception as e:
         logger.error(f"Backup verify error: {e}")
-        await callback.message.edit_text(ERROR_GENERAL)
+        try:
+            await callback.message.edit_text(ERROR_GENERAL)
+        except Exception:
+            pass
 
     await safe_callback_answer(callback)
 
@@ -9133,14 +9349,32 @@ async def backup_restore_file(callback: CallbackQuery):
         await safe_callback_answer(callback)
         return
 
-    from app.services.backup_service import get_backup_metadata
+    from app.services.backup_service import get_backup_metadata, validate_uploaded_backup
     metadata = get_backup_metadata(filepath)
+    
+    # Validate backup before showing confirmation
+    validation = validate_uploaded_backup(filepath)
+    
+    if not validation["valid"]:
+        error_text = "❌ فایل پشتیبان معتبر نیست:\n"
+        for err in validation["errors"]:
+            error_text += f"  ❌ {err}\n"
+        await callback.message.edit_text(error_text, reply_markup=backup_menu())
+        await safe_callback_answer(callback)
+        return
 
     text = f"{BACKUP_RESTORE_CONFIRM}\n\n"
     text += f"📦 فایل: {filename}\n"
     if metadata:
         text += f"📅 تاریخ: {metadata.get('jalali_date', '-')}\n"
         text += f"📋 اسناد: {metadata.get('total_documents', 0)}\n"
+        if metadata.get('has_media'):
+            text += f"🖼 فایل‌های رسانه: بله\n"
+    
+    if validation.get("warnings"):
+        text += "\n⚠️ هشدارها:\n"
+        for w in validation["warnings"]:
+            text += f"  • {w}\n"
 
     await callback.message.edit_text(text, reply_markup=backup_restore_confirm_keyboard(filename))
     await safe_callback_answer(callback)
@@ -9148,7 +9382,7 @@ async def backup_restore_file(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("backup_restore_confirm:"))
 async def backup_restore_confirm(callback: CallbackQuery):
-    """Execute restore from backup."""
+    """Execute restore from server backup with path remapping."""
     filename = callback.data.split(":", 1)[1]
     filepath = os.path.join(settings.BACKUP_DIR, filename)
 
@@ -9160,8 +9394,25 @@ async def backup_restore_confirm(callback: CallbackQuery):
             await safe_callback_answer(callback)
             return
 
-        from app.services.backup_service import restore_from_backup
-        result = restore_from_backup(filepath, drop_existing=True)
+        # Validate backup before restoring
+        from app.services.backup_service import validate_uploaded_backup, restore_from_backup
+        validation = validate_uploaded_backup(filepath)
+        
+        if not validation["valid"]:
+            error_text = "❌ فایل پشتیبان معتبر نیست:\n"
+            for err in validation["errors"]:
+                error_text += f"  ❌ {err}\n"
+            await callback.message.edit_text(error_text, reply_markup=backup_menu())
+            await safe_callback_answer(callback)
+            return
+
+        # Always pass new_telegram_id so restored data is merged to the current user
+        result = restore_from_backup(
+            filepath, 
+            drop_existing=True,
+            remap_paths=True,
+            new_telegram_id=callback.from_user.id
+        )
 
         if result["success"]:
             text = f"{BACKUP_RESTORED}\n\n"
@@ -9169,12 +9420,35 @@ async def backup_restore_confirm(callback: CallbackQuery):
             text += f"📋 اسناد بازیابی شده: {result['total_docs']}"
             if result.get("media_restored"):
                 text += f"\n🖼 فایل‌های رسانه بازیابی شده: {result['media_restored']}"
+            
+            # Clear all in-memory caches so fresh data is loaded from DB
+            _debt_groups_cache.clear()
+            _recv_groups_cache.clear()
+            _card_groups_cache.clear()
+            _settlement_groups_cache.clear()
+            _debt_payments_cache.clear()
+            _recv_payments_cache.clear()
+            _debt_rpt_cache.clear()
+            _recv_rpt_cache.clear()
+            _callback_index.clear()
+            
+            # Show verification results
+            verification = result.get("verification", {})
+            if verification.get("checks"):
+                text += "\n\n🔍 اعتبارسنجی:\n"
+                for check in verification["checks"][:5]:
+                    text += f"  {check}\n"
+            
+            if result.get("warnings"):
+                text += "\n\n⚠️ هشدارها:\n"
+                for w in result["warnings"]:
+                    text += f"  • {w}\n"
         else:
             text = f"❌ خطا در بازیابی:\n"
             for err in result["errors"]:
                 text += f"  ❌ {err}\n"
 
-        await callback.message.edit_text(text)
+        await callback.message.edit_text(text, reply_markup=backup_menu())
 
     except Exception as e:
         logger.error(f"Restore error: {e}")

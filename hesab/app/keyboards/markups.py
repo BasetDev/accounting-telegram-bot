@@ -318,6 +318,29 @@ def backup_restore_confirm_keyboard(filename: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def backup_restore_menu_keyboard() -> InlineKeyboardMarkup:
+    """Restore menu with server and upload options."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🔄 بازیابی از سرور", callback_data="backup_restore_server"),
+        InlineKeyboardButton(text="📤 بارگذاری فایل", callback_data="backup_restore_upload")
+    )
+    builder.row(
+        InlineKeyboardButton(text="🔙 بازگشت", callback_data="backup_menu_back")
+    )
+    return builder.as_markup()
+
+
+def backup_upload_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Confirmation keyboard for uploaded backup restore."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ بله، بازیابی شود", callback_data="backup_upload_restore_confirm"),
+        InlineKeyboardButton(text="❌ انصراف", callback_data="backup_menu_back")
+    )
+    return builder.as_markup()
+
+
 def backup_delete_confirm_keyboard(filename: str) -> InlineKeyboardMarkup:
     """Confirmation keyboard for delete."""
     builder = InlineKeyboardBuilder()
