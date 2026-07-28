@@ -5,35 +5,44 @@
 PROJECT STRUCTURE
 ══════════════════════════════════════════════════════════════
 
-hesab/
-├── main.py                          # Entry point (aiogram 3.x polling)
-├── .env                             # Configuration (BOT_TOKEN, MONGO_URI, etc.)
-├── APP_STRUCTURE.md                 # This file
-├── hesab/
-│   ├── app/
-│   │   ├── config.py                # Settings (env vars, paths)
-│   │   ├── database/
-│   │   │   ├── models.py            # MongoDB connection, document factories, indexes, auto-increment counters
-│   │   │   └── repository.py        # Repository pattern (User, Transaction, Payment, Customer, Card, Reminder, Backup)
-│   │   ├── handlers/
-│   │   │   └── main_handler.py      # All handlers (~10,700 lines, single router), FSM states, middleware, caches
-│   │   ├── keyboards/
-│   │   │   └── markups.py           # All keyboards (Inline + Reply)
-│   │   ├── services/
-│   │   │   └── export_service.py    # Excel/PDF export (openpyxl, reportlab)
-│   │   ├── utils/
-│   │   │   ├── messages.py          # All message templates (Persian)
-│   │   │   ├── logger.py            # Logging (RotatingFileHandler + console)
-│   │   │   └── jdatetime_helper.py  # Jalali date utilities, amount formatting, number-to-words
-│   │   └── middleware/
-│   │       └── __init__.py          # (empty; LoggingMiddleware lives in main_handler.py)
-│   ├── uploads/                     # Photo attachments
-│   ├── exports/                     # Generated Excel/PDF files
-│   ├── backups/                     # Database backups
-│   ├── logs/                        # Log files
-│   └── data/                        # Local data (if any)
-├── test_hierarchy.py                # Test script for debt/receivable hierarchy
-└── start_bot.sh                     # Bot startup script
+(root)/
+├── hesab/                              # Main application directory
+│   ├── main.py                         # Entry point (aiogram 3.x polling)
+│   └── app/                            # Application package
+│       ├── __init__.py
+│       ├── config.py                   # Settings (env vars, paths)
+│       ├── database/
+│       │   ├── models.py               # MongoDB connection, document factories, indexes, auto-increment counters
+│       │   └── repository.py           # Repository pattern (User, Transaction, Payment, Customer, Card, Reminder, Backup)
+│       ├── handlers/
+│       │   └── main_handler.py         # All handlers (~11,400 lines, single router), FSM states, middleware, caches
+│       ├── keyboards/
+│       │   └── markups.py              # All keyboards (Inline + Reply)
+│       ├── middleware/
+│       │   └── __init__.py             # (empty; LoggingMiddleware lives in main_handler.py)
+│       ├── services/
+│       │   ├── backup_service.py       # Backup/restore logic (ZIP, MongoDB export/import)
+│       │   └── export_service.py       # Excel/PDF export (openpyxl, reportlab)
+│       └── utils/
+│           ├── jdatetime_helper.py     # Jalali date utilities, amount formatting, number-to-words
+│           ├── logger.py               # Logging (RotatingFileHandler + console)
+│           └── messages.py             # All message templates (Persian)
+├── backups/                            # Database backups (ZIP files)
+├── data/                               # Local data (legacy SQLite)
+├── docs/                               # Project documentation (reports, analysis)
+├── exports/                            # Generated Excel/PDF files
+├── logs/                               # Log files
+├── uploads/                            # Photo attachments
+├── .dockerignore                       # Docker ignore rules
+├── .env                                # Configuration (BOT_TOKEN, MONGO_URI, etc.)
+├── .gitignore                          # Git ignore rules
+├── APP_STRUCTURE.md                    # This file
+├── Dockerfile                          # Docker build configuration
+├── README.md                           # Project documentation
+├── railway.json                        # Railway deployment config
+├── requirements.txt                    # Python dependencies
+├── run_bot.sh                          # Bot startup script (with PID)
+└── start_bot.sh                        # Bot startup script (simple)
 
 ══════════════════════════════════════════════════════════════
 TECH STACK
@@ -85,7 +94,7 @@ TransactionRepository
 ├── get_total_by_type(user_id)                            → dict of totals per type
 ├── update(txn_id, **kwargs)
 ├── settle_transaction(txn_id)                            → set is_settled=True
-├── delete(txn_id)
+├── delete(txn_id)                                        → cascade: deletes payments
 └── search(user_id, query_text, transaction_type, ...)
 
 CustomerRepository
@@ -94,7 +103,7 @@ CustomerRepository
 ├── get_by_user(user_id)
 ├── search(user_id, query)
 ├── update(customer_id, full_name, phone, address, notes)
-├── delete(customer_id)
+├── delete(customer_id)                                   → cascade: transactions, payments, cards
 └── update_financial_summary(customer_id)                 → recalc total_debt/total_receivable
 
 PaymentRepository
@@ -236,7 +245,7 @@ BOT ENTRY POINTS
 │   │   ├── Level 2 — Customer Debt List (inline) ── [debt_cust_detail:{key}:{party}]
 │   │   │   ├── 💳 {party} (customer summary)
 │   │   │   ├── 📋 #{id} | {amount} تومان  [debt_item_detail:{key}:{party}:{id}]  (per debt, due-status emoji)
-│   │   │   └── [🔙 بازگشت به مشتریان]     [debt_group_back] → Debt Submenu
+│   │   │   └── [🔙 بازگشت به مشتریان]     [debt_group_back] → Level 1 (regenerates customer overview)
 │   │   │
 │   │   └── Level 3 — Debt Detail (inline) ── [debt_item_detail:{key}:{party}:{id}]
 │   │       ├── Full debt info (ID, party, category, amount, remaining, description, due date, card, sheba, bank)
@@ -465,7 +474,7 @@ BOT ENTRY POINTS
 │   │   │       ├── [📩 پیامک همه]  [recv_group_sms:{key}:{party}]
 │   │   │       ├── [💵 دریافت]     [recv_group_pay:{key}:{party}]
 │   │   │       │   └── Customer-level FIFO payment → PaymentForm FSM
-│   │   │       └── [🔙 بازگشت به لیست]  [recv_group_back] → Receivable Submenu
+│   │   │       └── [🔙 بازگشت به لیست]  [recv_group_back] → Level 1 (regenerates customer overview)
 │   │   ├── Per-receivable items: [recv_item_detail:{key}:{party}:{id}]
 │   │   └── ✅ {party} | تسویه شده ({count} مورد)
 │   │
@@ -621,7 +630,7 @@ BOT ENTRY POINTS
 │   │   │   ├── {customer name}        [delete_customer:{id}]
 │   │   │   └── ❌ انصراف              [delete_customer:cancel] → Customer Menu
 │   │   └── Step 2: Confirm (inline)
-│   │       ├── ✅ تأیید  [confirm_yes] → Delete → Main Menu
+│   │       ├── ✅ تأیید  [confirm_yes] → Delete (cascade: transactions, payments, cards) → Main Menu
 │   │       └── ❌ رد     [confirm_no]  → Cancel → Main Menu
 │   │
 │   ├── 🔍 جستجوی مشتری ──────────────────────────── [CustomerSearchForm FSM]
@@ -787,7 +796,6 @@ BOT ENTRY POINTS
 │   │   └── 📤 بارگذاری فایل [backup_restore_upload] → Upload .zip → validate → confirm → restore
 │   │   └── Cross-bot restore: all data collections + media imported, users merged into one
 │   │   └── Cross-bot merge: primary user (most data) absorbs all others, telegram_id set to new admin
-│   │   └── Cross-bot: backups collection skipped (file references invalid on target), version <2.0 rejected
 │   │   └── Restore order: import data → import media → merge users → recreate indexes → rebuild counters → verify
 │   ├── 📊 آمار پشتیبان‌ها → Shows total count, size, types, media info
 │   ├── 🧹 پاکسازی قدیمی‌ها → Keeps 5 most recent, deletes older backups
@@ -917,7 +925,7 @@ SHARED INLINE ACTIONS (available on debt/receivable list items)
 
 🗑 حذف [delete_debt:{txn_id}] / [delete_receivable:{txn_id}]
     └── Confirmation (inline)
-        ├── ✅ تأیید  [confirm_yes] → Delete → Main Menu
+        ├── ✅ تأیید  [confirm_yes] → Delete (cascade: payments) → Main Menu
         └── ❌ رد     [confirm_no]  → Cancel → Main Menu
 
 📜 تاریخچه پرداخت [debt_payment_history:{txn_id}] / [receivable_payment_history:{txn_id}]
@@ -962,7 +970,7 @@ CACHING STRATEGY
 
 The bot uses in-memory caches with asyncio.Lock for thread safety:
 
-- _debt_groups_cache       → Debt active/overdue hierarchical view data
+- _debt_groups_cache       → Debt active/overdue hierarchical view data + debt payment customer data
 - _recv_groups_cache       → Receivable active/overdue hierarchical view data
 - _debt_payments_cache     → Debt payments view data
 - _recv_payments_cache     → Receivable collections view data
@@ -1113,6 +1121,9 @@ rvp_*           → Receivable view payments
 debt_cust_detail:* → Debt customer detail (Level 2)
 debt_item_detail:* → Debt item detail (Level 3)
 debt_all_cust:*  → Debt "all" customer detail
+recv_cust_detail:* → Receivable customer detail (Level 2, active view)
+recv_all_cust:*  → Receivable "all" customer detail (Level 2, all items view)
+recv_item_detail:* → Receivable item detail (Level 3)
 card_*          → Card module
 search_type_*   → Search type selection
 backup_*        → Backup operations

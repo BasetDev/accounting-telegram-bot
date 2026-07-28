@@ -1174,6 +1174,7 @@ async def debt_confirm(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
         except Exception as e:
             logger.error(f"Error saving debt: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()
@@ -1662,6 +1663,7 @@ async def receivable_confirm(callback: CallbackQuery, state: FSMContext):
             await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
         except Exception as e:
             logger.error(f"Error saving receivable: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()
@@ -2402,6 +2404,7 @@ async def _process_edit_confirm(callback: CallbackQuery, state: FSMContext, text
             await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
         except Exception as e:
             logger.error(f"Error updating {text_type}: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()
@@ -2464,6 +2467,7 @@ async def _process_delete_confirm(callback: CallbackQuery, state: FSMContext, te
             await callback.message.answer(MENU_TEXT, reply_markup=main_menu())
         except Exception as e:
             logger.error(f"Error deleting {text_type}: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()
@@ -2770,7 +2774,8 @@ def _evict_cache(cache: dict, max_size: int = _RECV_CACHE_MAX):
             del cache[k]
 
 async def _send_grouped_receivable_list(message: Message, txns: list, title: str,
-                                        empty_msg: str, cache_key: str = None):
+                                        empty_msg: str, cache_key: str = None,
+                                        callback_prefix: str = "recv_cust_detail"):
     """Send receivables grouped by customer.
 
     Main list shows ONLY customers as parent nodes.
@@ -2810,7 +2815,7 @@ async def _send_grouped_receivable_list(message: Message, txns: list, title: str
         short_id = await _register_callback_data(cache_key, safe_key)
         buttons_data.append({
             "label": label,
-            "callback_data": f"debt_all_cust:{short_id}"
+            "callback_data": f"{callback_prefix}:{short_id}"
         })
 
     await message.answer(
@@ -3045,9 +3050,9 @@ async def _send_grouped_customer_debt_list(message: Message, txns: list):
     groups = _group_receivables_by_customer(txns)
 
     cache_key = f"debt_pay_cust_{id(message)}"
-    async with _recv_groups_lock:
-        _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
-        _evict_cache(_recv_groups_cache)
+    async with _debt_groups_lock:
+        _debt_groups_cache[cache_key] = {g["party"]: g for g in groups}
+        _evict_cache(_debt_groups_cache)
 
     active_groups = [g for g in groups if g["remaining"] > 0]
     total_remaining = sum(g["remaining"] for g in active_groups)
@@ -3087,8 +3092,8 @@ async def debt_pay_cust_handler(callback: CallbackQuery, state: FSMContext):
 
     cache_key, safe_party, _ = lookup_result
 
-    async with _recv_groups_lock:
-        cached = _recv_groups_cache.get(cache_key)
+    async with _debt_groups_lock:
+        cached = _debt_groups_cache.get(cache_key)
     if not cached:
         await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
         return
@@ -3263,53 +3268,65 @@ async def debt_active_list(callback: CallbackQuery):
 @router.callback_query(F.data == "debt_overdue")
 async def debt_overdue_list(callback: CallbackQuery):
     """Show overdue debts grouped by customer."""
-    await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    today = get_jalali_date()
-    txns = TransactionRepository.get_overdue( user["id"], "debt", today)
-    cache_key = f"debt_overdue_{user["id"]}"
-    await _send_grouped_debt_list(
-        callback.message, txns, DEBT_OVERDUE,
-        DEBT_OVERDUE_EMPTY, cache_key
-    )
+    try:
+        await safe_delete(callback.message)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        today = get_jalali_date()
+        txns = TransactionRepository.get_overdue( user["id"], "debt", today)
+        cache_key = f"debt_overdue_{user["id"]}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_OVERDUE,
+            DEBT_OVERDUE_EMPTY, cache_key
+        )
+    except Exception as e:
+        logger.error(f"Error in debt_overdue_list: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "debt_due_today")
 async def debt_due_today_list(callback: CallbackQuery):
     """Show debts due today grouped by customer."""
-    await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    today = get_jalali_date()
-    txns = TransactionRepository.get_due_today( user["id"], "debt", today)
-    cache_key = f"debt_today_{user["id"]}"
-    await _send_grouped_debt_list(
-        callback.message, txns, DEBT_DUE_TODAY,
-        DEBT_DUE_TODAY_EMPTY, cache_key
-    )
+    try:
+        await safe_delete(callback.message)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        today = get_jalali_date()
+        txns = TransactionRepository.get_due_today( user["id"], "debt", today)
+        cache_key = f"debt_today_{user["id"]}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_DUE_TODAY,
+            DEBT_DUE_TODAY_EMPTY, cache_key
+        )
+    except Exception as e:
+        logger.error(f"Error in debt_due_today_list: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "debt_due_week")
 async def debt_due_week_list(callback: CallbackQuery):
     """Show debts due this week grouped by customer."""
-    await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    today = get_jalali_date()
-    week_end = get_week_end_jalali()
-    txns = TransactionRepository.get_due_this_week( user["id"], "debt", today, week_end)
-    cache_key = f"debt_week_{user["id"]}"
-    await _send_grouped_debt_list(
-        callback.message, txns, DEBT_DUE_WEEK,
-        DEBT_DUE_WEEK_EMPTY, cache_key
-    )
+    try:
+        await safe_delete(callback.message)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        today = get_jalali_date()
+        week_end = get_week_end_jalali()
+        txns = TransactionRepository.get_due_this_week( user["id"], "debt", today, week_end)
+        cache_key = f"debt_week_{user["id"]}"
+        await _send_grouped_debt_list(
+            callback.message, txns, DEBT_DUE_WEEK,
+            DEBT_DUE_WEEK_EMPTY, cache_key
+        )
+    except Exception as e:
+        logger.error(f"Error in debt_due_week_list: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
     await safe_callback_answer(callback)
 
 # --- Debt category-filtered lists ---
@@ -3339,86 +3356,96 @@ async def debt_all_cat_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_all_cat:"))
 async def debt_all_cat_selected(callback: CallbackQuery):
     """Handle category selection for all debts."""
-    category = callback.data.split(":", 1)[1]
+    try:
+        category = callback.data.split(":", 1)[1]
 
-    if category == "back":
+        if category == "back":
+            await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        if category == "all":
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+            await safe_delete(callback.message)
+            cache_key = f"debt_all_{user["id"]}"
+            await _send_grouped_debt_list(
+                callback.message, txns, DEBT_ALL,
+                DEBT_EMPTY, cache_key
+            )
+            await safe_callback_answer(callback)
+            return
+
+        subs = DEBT_CATEGORIES.get(category, [])
+        if not subs:
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+            filtered = _filter_by_category(txns, category=category)
+            await safe_delete(callback.message)
+            cache_key = f"debt_all_{user["id"]}_{category}"
+            await _send_grouped_debt_list(
+                callback.message, filtered, f"{DEBT_ALL} ({category})",
+                DEBT_EMPTY, cache_key
+            )
+            await safe_callback_answer(callback)
+            return
+
+        await callback.message.edit_text(
+            f"📋 همه بدهی‌ها ({category})\n\nزیرمجموعه را انتخاب کنید:",
+            reply_markup=debt_subcategory_filter_keyboard("debt_all", category)
+        )
+        await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in debt_all_cat_selected: {e}", exc_info=True)
         await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
         await safe_callback_answer(callback)
-        return
-
-    if category == "all":
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
-        await safe_delete(callback.message)
-        cache_key = f"debt_all_{user["id"]}"
-        await _send_grouped_debt_list(
-            callback.message, txns, DEBT_ALL,
-            DEBT_EMPTY, cache_key
-        )
-        await safe_callback_answer(callback)
-        return
-
-    subs = DEBT_CATEGORIES.get(category, [])
-    if not subs:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
-        filtered = _filter_by_category(txns, category=category)
-        await safe_delete(callback.message)
-        cache_key = f"debt_all_{user["id"]}_{category}"
-        await _send_grouped_debt_list(
-            callback.message, filtered, f"{DEBT_ALL} ({category})",
-            DEBT_EMPTY, cache_key
-        )
-        await safe_callback_answer(callback)
-        return
-
-    await callback.message.edit_text(
-        f"📋 همه بدهی‌ها ({category})\n\nزیرمجموعه را انتخاب کنید:",
-        reply_markup=debt_subcategory_filter_keyboard("debt_all", category)
-    )
-    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("debt_all_sub:"))
 async def debt_all_sub_selected(callback: CallbackQuery):
     """Handle subcategory selection for all debts."""
-    subcategory = callback.data.split(":", 1)[1]
+    try:
+        subcategory = callback.data.split(":", 1)[1]
 
-    if subcategory == "back":
-        await callback.message.edit_text(
-            "📋 همه بدهی‌ها\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
-            reply_markup=debt_category_filter_keyboard("debt_all")
+        if subcategory == "back":
+            await callback.message.edit_text(
+                "📋 همه بدهی‌ها\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
+                reply_markup=debt_category_filter_keyboard("debt_all")
+            )
+            await safe_callback_answer(callback)
+            return
+
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
+
+        if subcategory != "all":
+            parent_cat = None
+            for cat, subs in DEBT_CATEGORIES.items():
+                if subcategory in subs:
+                    parent_cat = cat
+                    break
+            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+
+        await safe_delete(callback.message)
+        title = f"{DEBT_ALL} ({subcategory})" if subcategory != "all" else DEBT_ALL
+        cache_key = f"debt_all_{user["id"]}_{subcategory}"
+        await _send_grouped_debt_list(
+            callback.message, txns, title,
+            DEBT_EMPTY, cache_key
         )
         await safe_callback_answer(callback)
-        return
-
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    txns = TransactionRepository.get_by_user(user["id"], transaction_type="debt", limit=1000)
-
-    if subcategory != "all":
-        parent_cat = None
-        for cat, subs in DEBT_CATEGORIES.items():
-            if subcategory in subs:
-                parent_cat = cat
-                break
-        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
-
-    await safe_delete(callback.message)
-    title = f"{DEBT_ALL} ({subcategory})" if subcategory != "all" else DEBT_ALL
-    cache_key = f"debt_all_{user["id"]}_{subcategory}"
-    await _send_grouped_debt_list(
-        callback.message, txns, title,
-        DEBT_EMPTY, cache_key
-    )
-    await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in debt_all_sub_selected: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "debt_settled_cat")
 async def debt_settled_cat_menu(callback: CallbackQuery):
@@ -3432,77 +3459,87 @@ async def debt_settled_cat_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_settled_cat:"))
 async def debt_settled_cat_selected(callback: CallbackQuery):
     """Handle category selection for settled debts."""
-    category = callback.data.split(":", 1)[1]
+    try:
+        category = callback.data.split(":", 1)[1]
 
-    if category == "back":
+        if category == "back":
+            await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        if category == "all":
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_with_payments( user["id"], "debt")
+            await safe_delete(callback.message)
+            cache_key = f"debt_settled_{user["id"]}"
+            await _send_settled_debt_list(callback.message, txns, DEBT_SETTLED, DEBT_SETTLED_EMPTY, cache_key)
+            await safe_callback_answer(callback)
+            return
+
+        subs = DEBT_CATEGORIES.get(category, [])
+        if not subs:
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_with_payments( user["id"], "debt")
+            filtered = _filter_by_category(txns, category=category)
+            await safe_delete(callback.message)
+            cache_key = f"debt_settled_{user["id"]}_{category}"
+            await _send_settled_debt_list(callback.message, filtered, f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, cache_key)
+            await safe_callback_answer(callback)
+            return
+
+        await callback.message.edit_text(
+            f"🟢 تسویه شده ({category})\n\nزیرمجموعه را انتخاب کنید:",
+            reply_markup=debt_subcategory_filter_keyboard("debt_settled", category)
+        )
+        await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in debt_settled_cat_selected: {e}", exc_info=True)
         await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
         await safe_callback_answer(callback)
-        return
-
-    if category == "all":
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_with_payments( user["id"], "debt")
-        await safe_delete(callback.message)
-        cache_key = f"debt_settled_{user["id"]}"
-        await _send_settled_debt_list(callback.message, txns, DEBT_SETTLED, DEBT_SETTLED_EMPTY, cache_key)
-        await safe_callback_answer(callback)
-        return
-
-    subs = DEBT_CATEGORIES.get(category, [])
-    if not subs:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_with_payments( user["id"], "debt")
-        filtered = _filter_by_category(txns, category=category)
-        await safe_delete(callback.message)
-        cache_key = f"debt_settled_{user["id"]}_{category}"
-        await _send_settled_debt_list(callback.message, filtered, f"{DEBT_SETTLED} ({category})", DEBT_SETTLED_EMPTY, cache_key)
-        await safe_callback_answer(callback)
-        return
-
-    await callback.message.edit_text(
-        f"🟢 تسویه شده ({category})\n\nزیرمجموعه را انتخاب کنید:",
-        reply_markup=debt_subcategory_filter_keyboard("debt_settled", category)
-    )
-    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("debt_settled_sub:"))
 async def debt_settled_sub_selected(callback: CallbackQuery):
     """Handle subcategory selection for settled debts."""
-    subcategory = callback.data.split(":", 1)[1]
+    try:
+        subcategory = callback.data.split(":", 1)[1]
 
-    if subcategory == "back":
-        await callback.message.edit_text(
-            "🟢 تسویه شده\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
-            reply_markup=debt_category_filter_keyboard("debt_settled")
-        )
+        if subcategory == "back":
+            await callback.message.edit_text(
+                "🟢 تسویه شده\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
+                reply_markup=debt_category_filter_keyboard("debt_settled")
+            )
+            await safe_callback_answer(callback)
+            return
+
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_with_payments( user["id"], "debt")
+
+        if subcategory != "all":
+            parent_cat = None
+            for cat, subs in DEBT_CATEGORIES.items():
+                if subcategory in subs:
+                    parent_cat = cat
+                    break
+            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+
+        await safe_delete(callback.message)
+        title = f"{DEBT_SETTLED} ({subcategory})" if subcategory != "all" else DEBT_SETTLED
+        cache_key = f"debt_settled_{user["id"]}_{subcategory}"
+        await _send_settled_debt_list(callback.message, txns, title, DEBT_SETTLED_EMPTY, cache_key)
         await safe_callback_answer(callback)
-        return
-
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    txns = TransactionRepository.get_with_payments( user["id"], "debt")
-
-    if subcategory != "all":
-        parent_cat = None
-        for cat, subs in DEBT_CATEGORIES.items():
-            if subcategory in subs:
-                parent_cat = cat
-                break
-        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
-
-    await safe_delete(callback.message)
-    title = f"{DEBT_SETTLED} ({subcategory})" if subcategory != "all" else DEBT_SETTLED
-    cache_key = f"debt_settled_{user["id"]}_{subcategory}"
-    await _send_settled_debt_list(callback.message, txns, title, DEBT_SETTLED_EMPTY, cache_key)
-    await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in debt_settled_sub_selected: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+        await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "debt_pay_cat")
 async def debt_pay_cat_menu(callback: CallbackQuery):
@@ -3516,21 +3553,97 @@ async def debt_pay_cat_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("debt_pay_cat:"))
 async def debt_pay_cat_selected(callback: CallbackQuery, state: FSMContext):
     """Handle category selection for pay debt."""
-    category = callback.data.split(":", 1)[1]
+    try:
+        category = callback.data.split(":", 1)[1]
 
-    if category == "back":
+        if category == "back":
+            await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        if category == "all":
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_active( user["id"], "debt")
+            if not txns:
+                await callback.message.edit_text(PAY_DEBT_NO_ACTIVE, reply_markup=debt_submenu())
+                await safe_callback_answer(callback)
+                return
+
+            await _send_grouped_customer_debt_list(
+                callback.message, txns
+            )
+            await safe_callback_answer(callback)
+            return
+
+        subs = DEBT_CATEGORIES.get(category, [])
+        if not subs:
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_active( user["id"], "debt")
+            filtered = _filter_by_category(txns, category=category)
+            if not filtered:
+                await callback.message.edit_text(
+                    f"{PAY_DEBT_NO_ACTIVE}\n\nدسته: {category}",
+                    reply_markup=debt_submenu()
+                )
+                await safe_callback_answer(callback)
+                return
+
+            await _send_grouped_customer_debt_list(
+                callback.message, filtered
+            )
+            await safe_callback_answer(callback)
+            return
+
+        await callback.message.edit_text(
+            f"💳 پرداخت بدهی ({category})\n\nزیرمجموعه را انتخاب کنید:",
+            reply_markup=debt_subcategory_filter_keyboard("debt_pay", category)
+        )
+        await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in debt_pay_cat_selected: {e}", exc_info=True)
         await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
         await safe_callback_answer(callback)
-        return
 
-    if category == "all":
+@router.callback_query(F.data.startswith("debt_pay_sub:"))
+async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
+    """Handle subcategory selection for pay debt."""
+    try:
+        subcategory = callback.data.split(":", 1)[1]
+
+        if subcategory == "back":
+            await callback.message.edit_text(
+                "💳 پرداخت بدهی\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
+                reply_markup=debt_category_filter_keyboard("debt_pay")
+            )
+            await safe_callback_answer(callback)
+            return
+
         user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
             return
         txns = TransactionRepository.get_active( user["id"], "debt")
+
+        if subcategory != "all":
+            parent_cat = None
+            for cat, subs in DEBT_CATEGORIES.items():
+                if subcategory in subs:
+                    parent_cat = cat
+                    break
+            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+
         if not txns:
-            await callback.message.edit_text(PAY_DEBT_NO_ACTIVE, reply_markup=debt_submenu())
+            label = subcategory if subcategory != "all" else ""
+            await callback.message.edit_text(
+                f"{PAY_DEBT_NO_ACTIVE}\n\n{label}",
+                reply_markup=debt_submenu()
+            )
             await safe_callback_answer(callback)
             return
 
@@ -3538,76 +3651,10 @@ async def debt_pay_cat_selected(callback: CallbackQuery, state: FSMContext):
             callback.message, txns
         )
         await safe_callback_answer(callback)
-        return
-
-    subs = DEBT_CATEGORIES.get(category, [])
-    if not subs:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_active( user["id"], "debt")
-        filtered = _filter_by_category(txns, category=category)
-        if not filtered:
-            await callback.message.edit_text(
-                f"{PAY_DEBT_NO_ACTIVE}\n\nدسته: {category}",
-                reply_markup=debt_submenu()
-            )
-            await safe_callback_answer(callback)
-            return
-
-        await _send_grouped_customer_debt_list(
-            callback.message, filtered
-        )
+    except Exception as e:
+        logger.error(f"Error in debt_pay_sub_selected: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
         await safe_callback_answer(callback)
-        return
-
-    await callback.message.edit_text(
-        f"💳 پرداخت بدهی ({category})\n\nزیرمجموعه را انتخاب کنید:",
-        reply_markup=debt_subcategory_filter_keyboard("debt_pay", category)
-    )
-    await safe_callback_answer(callback)
-
-@router.callback_query(F.data.startswith("debt_pay_sub:"))
-async def debt_pay_sub_selected(callback: CallbackQuery, state: FSMContext):
-    """Handle subcategory selection for pay debt."""
-    subcategory = callback.data.split(":", 1)[1]
-
-    if subcategory == "back":
-        await callback.message.edit_text(
-            "💳 پرداخت بدهی\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
-            reply_markup=debt_category_filter_keyboard("debt_pay")
-        )
-        await safe_callback_answer(callback)
-        return
-
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    txns = TransactionRepository.get_active( user["id"], "debt")
-
-    if subcategory != "all":
-        parent_cat = None
-        for cat, subs in DEBT_CATEGORIES.items():
-            if subcategory in subs:
-                parent_cat = cat
-                break
-        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
-
-    if not txns:
-        label = subcategory if subcategory != "all" else ""
-        await callback.message.edit_text(
-            f"{PAY_DEBT_NO_ACTIVE}\n\n{label}",
-            reply_markup=debt_submenu()
-        )
-        await safe_callback_answer(callback)
-        return
-
-    await _send_grouped_customer_debt_list(
-        callback.message, txns
-    )
-    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "debt_reports")
 async def debt_reports(callback: CallbackQuery):
@@ -4381,8 +4428,65 @@ async def debt_detail_back_handler(callback: CallbackQuery):
 
 @router.callback_query(F.data == "debt_group_back")
 async def debt_group_back(callback: CallbackQuery):
-    """Navigate back to Level 1 (customer overview) or debt submenu."""
-    await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+    """Navigate back to Level 1 (customer overview) from Level 2."""
+    try:
+        user = UserRepository.get_by_telegram_id(callback.from_user.id)
+        if not user:
+            await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        txns = TransactionRepository.get_active(user["id"], "debt")
+        if not txns:
+            await callback.message.edit_text(DEBT_ACTIVE_EMPTY, reply_markup=debt_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        groups = _group_receivables_by_customer(txns)
+        cache_key = f"debt_active_{user['id']}"
+        async with _debt_groups_lock:
+            _debt_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_debt_groups_cache)
+
+        total_amount = sum(g["total"] for g in groups)
+        total_remaining = sum(g["remaining"] for g in groups)
+        total_items = sum(g["count"] for g in groups)
+        total_customers = len(groups)
+
+        text = f"💳 {DEBT_ACTIVE}\n\n"
+        text += "📊 خلاصه کلی\n"
+        text += f"• تعداد مشتریان: {total_customers}\n"
+        text += f"• تعداد بدهی‌ها: {total_items}\n"
+        text += f"• مجموع بدهی‌ها: {format_amount(total_amount)} تومان\n"
+        text += f"• مجموع باقی‌مانده: {format_amount(total_remaining)} تومان"
+        text += "\n\n────────────────────"
+
+        for g in groups:
+            text += f"\n\n👤 {g['party']}\n"
+            text += f"• تعداد بدهی‌ها: {g['count']}\n"
+            text += f"• مجموع: {format_amount(g['total'])} تومان\n"
+            if g['remaining'] > 0:
+                text += f"• باقی‌مانده: {format_amount(g['remaining'])} تومان"
+            else:
+                text += "• ✅ تسویه شده"
+
+        buttons_data = []
+        for g in groups:
+            safe_key = g["party"].replace(":", "_")
+            short_id = await _register_callback_data(cache_key, safe_key)
+            buttons_data.append({
+                "label": f"▶ مشاهده بدهی‌های {g['party']}",
+                "callback_data": f"debt_cust_detail:{short_id}"
+            })
+
+        await callback.message.edit_text(text)
+        await callback.message.answer(
+            "👤 مشتری مورد نظر را انتخاب کنید:",
+            reply_markup=debt_customer_keyboard(buttons_data)
+        )
+    except Exception as e:
+        logger.error(f"Error in debt_group_back: {e}", exc_info=True)
+        await callback.message.edit_text(DEBT_MENU_TITLE, reply_markup=debt_submenu())
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("debt_payment_history:"))
@@ -5266,53 +5370,65 @@ async def receivable_active_list(callback: CallbackQuery):
 @router.callback_query(F.data == "receivable_overdue")
 async def receivable_overdue_list(callback: CallbackQuery):
     """Show overdue receivables grouped by customer."""
-    await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    today = get_jalali_date()
-    txns = TransactionRepository.get_overdue( user["id"], "receivable", today)
-    cache_key = f"overdue_{user["id"]}"
-    await _send_grouped_receivable_list(
-        callback.message, txns, RECEIVABLE_OVERDUE,
-        RECEIVABLE_OVERDUE_EMPTY, cache_key
-    )
+    try:
+        await safe_delete(callback.message)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        today = get_jalali_date()
+        txns = TransactionRepository.get_overdue( user["id"], "receivable", today)
+        cache_key = f"overdue_{user["id"]}"
+        await _send_grouped_receivable_list(
+            callback.message, txns, RECEIVABLE_OVERDUE,
+            RECEIVABLE_OVERDUE_EMPTY, cache_key
+        )
+    except Exception as e:
+        logger.error(f"Error in receivable_overdue_list: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "receivable_due_today")
 async def receivable_due_today_list(callback: CallbackQuery):
     """Show receivables due today grouped by customer."""
-    await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    today = get_jalali_date()
-    txns = TransactionRepository.get_due_today( user["id"], "receivable", today)
-    cache_key = f"due_today_{user["id"]}"
-    await _send_grouped_receivable_list(
-        callback.message, txns, RECEIVABLE_DUE_TODAY,
-        RECEIVABLE_DUE_TODAY_EMPTY, cache_key
-    )
+    try:
+        await safe_delete(callback.message)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        today = get_jalali_date()
+        txns = TransactionRepository.get_due_today( user["id"], "receivable", today)
+        cache_key = f"due_today_{user["id"]}"
+        await _send_grouped_receivable_list(
+            callback.message, txns, RECEIVABLE_DUE_TODAY,
+            RECEIVABLE_DUE_TODAY_EMPTY, cache_key
+        )
+    except Exception as e:
+        logger.error(f"Error in receivable_due_today_list: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "receivable_due_week")
 async def receivable_due_week_list(callback: CallbackQuery):
     """Show receivables due this week grouped by customer."""
-    await safe_delete(callback.message)
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    today = get_jalali_date()
-    week_end = get_week_end_jalali()
-    txns = TransactionRepository.get_due_this_week( user["id"], "receivable", today, week_end)
-    cache_key = f"due_week_{user["id"]}"
-    await _send_grouped_receivable_list(
-        callback.message, txns, RECEIVABLE_DUE_WEEK,
-        RECEIVABLE_DUE_WEEK_EMPTY, cache_key
-    )
+    try:
+        await safe_delete(callback.message)
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        today = get_jalali_date()
+        week_end = get_week_end_jalali()
+        txns = TransactionRepository.get_due_this_week( user["id"], "receivable", today, week_end)
+        cache_key = f"due_week_{user["id"]}"
+        await _send_grouped_receivable_list(
+            callback.message, txns, RECEIVABLE_DUE_WEEK,
+            RECEIVABLE_DUE_WEEK_EMPTY, cache_key
+        )
+    except Exception as e:
+        logger.error(f"Error in receivable_due_week_list: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
 
 # --- Receivable 3-level hierarchy (active view) ---
@@ -5544,6 +5660,88 @@ async def receivable_detail_back_handler(callback: CallbackQuery):
     )
     await safe_callback_answer(callback)
 
+@router.callback_query(F.data.startswith("recv_all_cust:"))
+async def receivable_all_customer_detail(callback: CallbackQuery):
+    """Level 2: Show all receivables for a selected customer (from All view)."""
+    parts = callback.data.split(":", 1)
+    if len(parts) < 2:
+        await safe_callback_answer(callback, "⚠️ خطا.", show_alert=True)
+        return
+
+    short_id = parts[1]
+    lookup_result = await _lookup_callback_data(short_id)
+    if not lookup_result:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    cache_key, safe_party, _ = lookup_result
+
+    async with _recv_groups_lock:
+        cached = _recv_groups_cache.get(cache_key)
+    if not cached:
+        await safe_callback_answer(callback, "⚠️ اطلاعات قدیمی شده. لطفاً دوباره تلاش کنید.", show_alert=True)
+        return
+
+    group = None
+    for party, g in cached.items():
+        if party.replace(":", "_") == safe_party:
+            group = g
+            break
+
+    if not group:
+        await safe_callback_answer(callback, "⚠️ مشتری یافت نشد.", show_alert=True)
+        return
+
+    party = group["party"]
+    txns = group["txns"]
+
+    text = f"📋 {party}\n\n"
+    text += f"📊 خلاصه مشتری\n"
+    text += f"• تعداد طلب‌ها: {group['count']}\n"
+    text += f"• مجموع: {format_amount(group['total'])} تومان\n"
+    if group['remaining'] > 0:
+        text += f"• باقی‌مانده: {format_amount(group['remaining'])} تومان"
+    text += "\n────────────────────"
+
+    await callback.message.edit_text(text)
+
+    txns_data = []
+    for txn in txns:
+        if txn["is_settled"]:
+            due_emoji = "✅"
+        elif txn["due_jalali_date"]:
+            days_left = get_days_until(txn["due_jalali_date"])
+            if days_left < 0:
+                due_emoji = "🔴"
+            elif days_left == 0:
+                due_emoji = "🟡"
+            else:
+                due_emoji = "🟢"
+        else:
+            due_emoji = "⏳"
+
+        remaining = txn["amount"]
+        if not txn["is_settled"]:
+            remaining = PaymentRepository.get_remaining(txn["id"], txn["amount"])
+
+        if txn["is_settled"]:
+            label = f"✅ #{txn["id"]} | {format_amount(txn["amount"])} تومان (تسویه)"
+        elif remaining != txn["amount"]:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(remaining)}/{format_amount(txn["amount"])} تومان"
+        else:
+            label = f"{due_emoji} #{txn["id"]} | {format_amount(txn["amount"])} تومان"
+
+        txns_data.append({
+            "label": label,
+            "callback_data": f"recv_item_detail:{await _register_callback_data(cache_key, safe_party, str(txn['id']))}"
+        })
+
+    await callback.message.answer(
+        RECEIVABLE_SELECT_RECV,
+        reply_markup=recv_customer_debts_keyboard(txns_data)
+    )
+    await safe_callback_answer(callback)
+
 @router.callback_query(F.data.startswith("receivable_payment_history:"))
 async def receivable_payment_history(callback: CallbackQuery):
     """Show payment history for a receivable."""
@@ -5642,8 +5840,65 @@ async def receivable_customer_detail(callback: CallbackQuery):
 
 @router.callback_query(F.data == "recv_group_back")
 async def receivable_group_back(callback: CallbackQuery):
-    """Handle back button from customer detail - return to submenu."""
-    await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+    """Navigate back to Level 1 (customer overview) from Level 2."""
+    try:
+        user = UserRepository.get_by_telegram_id(callback.from_user.id)
+        if not user:
+            await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        txns = TransactionRepository.get_active(user["id"], "receivable")
+        if not txns:
+            await callback.message.edit_text(RECEIVABLE_ACTIVE_EMPTY, reply_markup=receivable_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        groups = _group_receivables_by_customer(txns)
+        cache_key = f"recv_active_{user['id']}"
+        async with _recv_groups_lock:
+            _recv_groups_cache[cache_key] = {g["party"]: g for g in groups}
+            _evict_cache(_recv_groups_cache)
+
+        total_amount = sum(g["total"] for g in groups)
+        total_remaining = sum(g["remaining"] for g in groups)
+        total_items = sum(g["count"] for g in groups)
+        total_customers = len(groups)
+
+        text = f"💵 {RECEIVABLE_ACTIVE}\n\n"
+        text += "📊 خلاصه کلی\n"
+        text += f"• تعداد مشتریان: {total_customers}\n"
+        text += f"• تعداد طلب‌ها: {total_items}\n"
+        text += f"• مجموع طلب‌ها: {format_amount(total_amount)} تومان\n"
+        text += f"• مجموع باقی‌مانده: {format_amount(total_remaining)} تومان"
+        text += "\n\n────────────────────"
+
+        for g in groups:
+            text += f"\n\n👤 {g['party']}\n"
+            text += f"• تعداد طلب‌ها: {g['count']}\n"
+            text += f"• مجموع: {format_amount(g['total'])} تومان\n"
+            if g['remaining'] > 0:
+                text += f"• باقی‌مانده: {format_amount(g['remaining'])} تومان"
+            else:
+                text += "• ✅ تسویه شده"
+
+        buttons_data = []
+        for g in groups:
+            safe_key = g["party"].replace(":", "_")
+            short_id = await _register_callback_data(cache_key, safe_key)
+            buttons_data.append({
+                "label": f"▶ مشاهده طلب‌های {g['party']}",
+                "callback_data": f"recv_cust_detail:{short_id}"
+            })
+
+        await callback.message.edit_text(text)
+        await callback.message.answer(
+            "👤 مشتری مورد نظر را انتخاب کنید:",
+            reply_markup=recv_customer_keyboard(buttons_data)
+        )
+    except Exception as e:
+        logger.error(f"Error in recv_group_back: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
     await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("recv_group_sms:"))
@@ -5859,77 +6114,87 @@ async def receivable_all_cat_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_all_cat:"))
 async def receivable_all_cat_selected(callback: CallbackQuery):
     """Handle category selection for all receivables."""
-    category = callback.data.split(":", 1)[1]
+    try:
+        category = callback.data.split(":", 1)[1]
 
-    if category == "back":
+        if category == "back":
+            await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        if category == "all":
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
+            await safe_delete(callback.message)
+            cache_key = f"recv_all_{user["id"]}"
+            await _send_grouped_receivable_list(callback.message, txns, RECEIVABLE_ALL, RECEIVABLE_EMPTY, cache_key, callback_prefix="recv_all_cust")
+            await safe_callback_answer(callback)
+            return
+
+        subs = RECEIVABLE_CATEGORIES.get(category, [])
+        if not subs:
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
+            filtered = _filter_by_category(txns, category=category)
+            await safe_delete(callback.message)
+            cache_key = f"recv_all_{user["id"]}_{category}"
+            await _send_grouped_receivable_list(callback.message, filtered, f"{RECEIVABLE_ALL} ({category})", RECEIVABLE_EMPTY, cache_key, callback_prefix="recv_all_cust")
+            await safe_callback_answer(callback)
+            return
+
+        await callback.message.edit_text(
+            f"📋 همه طلب‌ها ({category})\n\nزیرمجموعه را انتخاب کنید:",
+            reply_markup=receivable_subcategory_filter_keyboard("recv_all", category)
+        )
+        await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in receivable_all_cat_selected: {e}", exc_info=True)
         await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
         await safe_callback_answer(callback)
-        return
-
-    if category == "all":
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
-        await safe_delete(callback.message)
-        cache_key = f"recv_all_{user["id"]}"
-        await _send_grouped_receivable_list(callback.message, txns, RECEIVABLE_ALL, RECEIVABLE_EMPTY, cache_key)
-        await safe_callback_answer(callback)
-        return
-
-    subs = RECEIVABLE_CATEGORIES.get(category, [])
-    if not subs:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
-        filtered = _filter_by_category(txns, category=category)
-        await safe_delete(callback.message)
-        cache_key = f"recv_all_{user["id"]}_{category}"
-        await _send_grouped_receivable_list(callback.message, filtered, f"{RECEIVABLE_ALL} ({category})", RECEIVABLE_EMPTY, cache_key)
-        await safe_callback_answer(callback)
-        return
-
-    await callback.message.edit_text(
-        f"📋 همه طلب‌ها ({category})\n\nزیرمجموعه را انتخاب کنید:",
-        reply_markup=receivable_subcategory_filter_keyboard("recv_all", category)
-    )
-    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("recv_all_sub:"))
 async def receivable_all_sub_selected(callback: CallbackQuery):
     """Handle subcategory selection for all receivables."""
-    subcategory = callback.data.split(":", 1)[1]
+    try:
+        subcategory = callback.data.split(":", 1)[1]
 
-    if subcategory == "back":
-        await callback.message.edit_text(
-            "📋 همه طلب‌ها\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
-            reply_markup=receivable_category_filter_keyboard("recv_all")
-        )
+        if subcategory == "back":
+            await callback.message.edit_text(
+                "📋 همه طلب‌ها\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
+                reply_markup=receivable_category_filter_keyboard("recv_all")
+            )
+            await safe_callback_answer(callback)
+            return
+
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
+
+        if subcategory != "all":
+            parent_cat = None
+            for cat, subs in RECEIVABLE_CATEGORIES.items():
+                if subcategory in subs:
+                    parent_cat = cat
+                    break
+            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+
+        await safe_delete(callback.message)
+        title = f"{RECEIVABLE_ALL} ({subcategory})" if subcategory != "all" else RECEIVABLE_ALL
+        cache_key = f"recv_all_{user["id"]}_{subcategory}"
+        await _send_grouped_receivable_list(callback.message, txns, title, RECEIVABLE_EMPTY, cache_key, callback_prefix="recv_all_cust")
         await safe_callback_answer(callback)
-        return
-
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    txns = TransactionRepository.get_by_user(user["id"], transaction_type="receivable", limit=50)
-
-    if subcategory != "all":
-        parent_cat = None
-        for cat, subs in RECEIVABLE_CATEGORIES.items():
-            if subcategory in subs:
-                parent_cat = cat
-                break
-        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
-
-    await safe_delete(callback.message)
-    title = f"{RECEIVABLE_ALL} ({subcategory})" if subcategory != "all" else RECEIVABLE_ALL
-    cache_key = f"recv_all_{user["id"]}_{subcategory}"
-    await _send_grouped_receivable_list(callback.message, txns, title, RECEIVABLE_EMPTY, cache_key)
-    await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in receivable_all_sub_selected: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "receivable_settled_cat")
 async def receivable_settled_cat_menu(callback: CallbackQuery):
@@ -5943,77 +6208,87 @@ async def receivable_settled_cat_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_settled_cat:"))
 async def receivable_settled_cat_selected(callback: CallbackQuery):
     """Handle category selection for settled receivables."""
-    category = callback.data.split(":", 1)[1]
+    try:
+        category = callback.data.split(":", 1)[1]
 
-    if category == "back":
+        if category == "back":
+            await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        if category == "all":
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_with_payments( user["id"], "receivable")
+            await safe_delete(callback.message)
+            cache_key = f"recv_settled_{user["id"]}"
+            await _send_settled_customer_list(callback.message, txns, RECEIVABLE_SETTLED, RECEIVABLE_SETTLED_EMPTY, cache_key)
+            await safe_callback_answer(callback)
+            return
+
+        subs = RECEIVABLE_CATEGORIES.get(category, [])
+        if not subs:
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_with_payments( user["id"], "receivable")
+            filtered = _filter_by_category(txns, category=category)
+            await safe_delete(callback.message)
+            cache_key = f"recv_settled_{user["id"]}_{category}"
+            await _send_settled_customer_list(callback.message, filtered, f"{RECEIVABLE_SETTLED} ({category})", RECEIVABLE_SETTLED_EMPTY, cache_key)
+            await safe_callback_answer(callback)
+            return
+
+        await callback.message.edit_text(
+            f"🟢 تسویه شده ({category})\n\nزیرمجموعه را انتخاب کنید:",
+            reply_markup=receivable_subcategory_filter_keyboard("recv_settled", category)
+        )
+        await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in receivable_settled_cat_selected: {e}", exc_info=True)
         await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
         await safe_callback_answer(callback)
-        return
-
-    if category == "all":
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_with_payments( user["id"], "receivable")
-        await safe_delete(callback.message)
-        cache_key = f"recv_settled_{user["id"]}"
-        await _send_settled_customer_list(callback.message, txns, RECEIVABLE_SETTLED, RECEIVABLE_SETTLED_EMPTY, cache_key)
-        await safe_callback_answer(callback)
-        return
-
-    subs = RECEIVABLE_CATEGORIES.get(category, [])
-    if not subs:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_with_payments( user["id"], "receivable")
-        filtered = _filter_by_category(txns, category=category)
-        await safe_delete(callback.message)
-        cache_key = f"recv_settled_{user["id"]}_{category}"
-        await _send_settled_customer_list(callback.message, filtered, f"{RECEIVABLE_SETTLED} ({category})", RECEIVABLE_SETTLED_EMPTY, cache_key)
-        await safe_callback_answer(callback)
-        return
-
-    await callback.message.edit_text(
-        f"🟢 تسویه شده ({category})\n\nزیرمجموعه را انتخاب کنید:",
-        reply_markup=receivable_subcategory_filter_keyboard("recv_settled", category)
-    )
-    await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("recv_settled_sub:"))
 async def receivable_settled_sub_selected(callback: CallbackQuery):
     """Handle subcategory selection for settled receivables."""
-    subcategory = callback.data.split(":", 1)[1]
+    try:
+        subcategory = callback.data.split(":", 1)[1]
 
-    if subcategory == "back":
-        await callback.message.edit_text(
-            "🟢 تسویه شده\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
-            reply_markup=receivable_category_filter_keyboard("recv_settled")
-        )
+        if subcategory == "back":
+            await callback.message.edit_text(
+                "🟢 تسویه شده\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
+                reply_markup=receivable_category_filter_keyboard("recv_settled")
+            )
+            await safe_callback_answer(callback)
+            return
+
+        user = UserRepository.get_by_telegram_id( callback.from_user.id)
+        if not user:
+            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+            return
+        txns = TransactionRepository.get_with_payments( user["id"], "receivable")
+
+        if subcategory != "all":
+            parent_cat = None
+            for cat, subs in RECEIVABLE_CATEGORIES.items():
+                if subcategory in subs:
+                    parent_cat = cat
+                    break
+            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+
+        await safe_delete(callback.message)
+        title = f"{RECEIVABLE_SETTLED} ({subcategory})" if subcategory != "all" else RECEIVABLE_SETTLED
+        cache_key = f"recv_settled_{user["id"]}_{subcategory}"
+        await _send_settled_customer_list(callback.message, txns, title, RECEIVABLE_SETTLED_EMPTY, cache_key)
         await safe_callback_answer(callback)
-        return
-
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    txns = TransactionRepository.get_with_payments( user["id"], "receivable")
-
-    if subcategory != "all":
-        parent_cat = None
-        for cat, subs in RECEIVABLE_CATEGORIES.items():
-            if subcategory in subs:
-                parent_cat = cat
-                break
-        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
-
-    await safe_delete(callback.message)
-    title = f"{RECEIVABLE_SETTLED} ({subcategory})" if subcategory != "all" else RECEIVABLE_SETTLED
-    cache_key = f"recv_settled_{user["id"]}_{subcategory}"
-    await _send_settled_customer_list(callback.message, txns, title, RECEIVABLE_SETTLED_EMPTY, cache_key)
-    await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in receivable_settled_sub_selected: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+        await safe_callback_answer(callback)
 
 @router.callback_query(F.data.startswith("rs_cust:"))
 async def receivable_settled_customer_selected(callback: CallbackQuery):
@@ -7204,21 +7479,97 @@ async def receivable_receive_cat_menu(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("recv_receive_cat:"))
 async def receivable_receive_cat_selected(callback: CallbackQuery, state: FSMContext):
     """Handle category selection for receive receivable - show customers grouped by name."""
-    category = callback.data.split(":", 1)[1]
+    try:
+        category = callback.data.split(":", 1)[1]
 
-    if category == "back":
+        if category == "back":
+            await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
+            await safe_callback_answer(callback)
+            return
+
+        if category == "all":
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_active( user["id"], "receivable")
+            if not txns:
+                await callback.message.edit_text(RECEIVE_RECV_NO_ACTIVE, reply_markup=receivable_submenu())
+                await safe_callback_answer(callback)
+                return
+
+            await _send_grouped_customer_pay_list(
+                callback.message, txns
+            )
+            await safe_callback_answer(callback)
+            return
+
+        subs = RECEIVABLE_CATEGORIES.get(category, [])
+        if not subs:
+            user = UserRepository.get_by_telegram_id( callback.from_user.id)
+            if not user:
+                await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
+                return
+            txns = TransactionRepository.get_active( user["id"], "receivable")
+            filtered = _filter_by_category(txns, category=category)
+            if not filtered:
+                await callback.message.edit_text(
+                    f"{RECEIVE_RECV_NO_ACTIVE}\n\nدسته: {category}",
+                    reply_markup=receivable_submenu()
+                )
+                await safe_callback_answer(callback)
+                return
+
+            await _send_grouped_customer_pay_list(
+                callback.message, filtered
+            )
+            await safe_callback_answer(callback)
+            return
+
+        await callback.message.edit_text(
+            f"💵 دریافت طلب ({category})\n\nزیرمجموعه را انتخاب کنید:",
+            reply_markup=receivable_subcategory_filter_keyboard("recv_receive", category)
+        )
+        await safe_callback_answer(callback)
+    except Exception as e:
+        logger.error(f"Error in receivable_receive_cat_selected: {e}", exc_info=True)
         await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
         await safe_callback_answer(callback)
-        return
 
-    if category == "all":
+@router.callback_query(F.data.startswith("recv_receive_sub:"))
+async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMContext):
+    """Handle subcategory selection for receive receivable."""
+    try:
+        subcategory = callback.data.split(":", 1)[1]
+
+        if subcategory == "back":
+            await callback.message.edit_text(
+                "💵 دریافت طلب\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
+                reply_markup=receivable_category_filter_keyboard("recv_receive")
+            )
+            await safe_callback_answer(callback)
+            return
+
         user = UserRepository.get_by_telegram_id( callback.from_user.id)
         if not user:
             await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
             return
         txns = TransactionRepository.get_active( user["id"], "receivable")
+
+        if subcategory != "all":
+            parent_cat = None
+            for cat, subs in RECEIVABLE_CATEGORIES.items():
+                if subcategory in subs:
+                    parent_cat = cat
+                    break
+            txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
+
         if not txns:
-            await callback.message.edit_text(RECEIVE_RECV_NO_ACTIVE, reply_markup=receivable_submenu())
+            label = subcategory if subcategory != "all" else ""
+            await callback.message.edit_text(
+                f"{RECEIVE_RECV_NO_ACTIVE}\n\n{label}",
+                reply_markup=receivable_submenu()
+            )
             await safe_callback_answer(callback)
             return
 
@@ -7226,76 +7577,10 @@ async def receivable_receive_cat_selected(callback: CallbackQuery, state: FSMCon
             callback.message, txns
         )
         await safe_callback_answer(callback)
-        return
-
-    subs = RECEIVABLE_CATEGORIES.get(category, [])
-    if not subs:
-        user = UserRepository.get_by_telegram_id( callback.from_user.id)
-        if not user:
-            await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-            return
-        txns = TransactionRepository.get_active( user["id"], "receivable")
-        filtered = _filter_by_category(txns, category=category)
-        if not filtered:
-            await callback.message.edit_text(
-                f"{RECEIVE_RECV_NO_ACTIVE}\n\nدسته: {category}",
-                reply_markup=receivable_submenu()
-            )
-            await safe_callback_answer(callback)
-            return
-
-        await _send_grouped_customer_pay_list(
-            callback.message, filtered
-        )
+    except Exception as e:
+        logger.error(f"Error in receivable_receive_sub_selected: {e}", exc_info=True)
+        await callback.message.edit_text(RECEIVABLE_MENU_TITLE, reply_markup=receivable_submenu())
         await safe_callback_answer(callback)
-        return
-
-    await callback.message.edit_text(
-        f"💵 دریافت طلب ({category})\n\nزیرمجموعه را انتخاب کنید:",
-        reply_markup=receivable_subcategory_filter_keyboard("recv_receive", category)
-    )
-    await safe_callback_answer(callback)
-
-@router.callback_query(F.data.startswith("recv_receive_sub:"))
-async def receivable_receive_sub_selected(callback: CallbackQuery, state: FSMContext):
-    """Handle subcategory selection for receive receivable."""
-    subcategory = callback.data.split(":", 1)[1]
-
-    if subcategory == "back":
-        await callback.message.edit_text(
-            "💵 دریافت طلب\n\nدسته‌بندی مورد نظر را انتخاب کنید:",
-            reply_markup=receivable_category_filter_keyboard("recv_receive")
-        )
-        await safe_callback_answer(callback)
-        return
-
-    user = UserRepository.get_by_telegram_id( callback.from_user.id)
-    if not user:
-        await safe_callback_answer(callback, ACCESS_DENIED, show_alert=True)
-        return
-    txns = TransactionRepository.get_active( user["id"], "receivable")
-
-    if subcategory != "all":
-        parent_cat = None
-        for cat, subs in RECEIVABLE_CATEGORIES.items():
-            if subcategory in subs:
-                parent_cat = cat
-                break
-        txns = _filter_by_category(txns, category=parent_cat, subcategory=subcategory)
-
-    if not txns:
-        label = subcategory if subcategory != "all" else ""
-        await callback.message.edit_text(
-            f"{RECEIVE_RECV_NO_ACTIVE}\n\n{label}",
-            reply_markup=receivable_submenu()
-        )
-        await safe_callback_answer(callback)
-        return
-
-    await _send_grouped_customer_pay_list(
-        callback.message, txns
-    )
-    await safe_callback_answer(callback)
 
 @router.callback_query(F.data == "receivable_reports")
 async def receivable_reports(callback: CallbackQuery):
@@ -8402,33 +8687,38 @@ async def customer_add_notes(message: Message, state: FSMContext):
         )
     except Exception as e:
         logger.error(f"Error adding customer: {e}")
+        await state.clear()
         await message.answer(ERROR_GENERAL, reply_markup=customer_menu())
 
 @router.message(F.text == "📋 لیست مشتریان")
 async def customer_list(message: Message):
     """Show list of customers."""
-    user = get_user(message)
-    customers = CustomerRepository.get_by_user(user["id"])
-        
-    if not customers:
-        await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
-        return
-        
-    text = "👤 لیست مشتریان:\n\n"
-    for i, c in enumerate(customers, 1):
-        debt_str = format_amount(c["total_debt"])
-        recv_str = format_amount(c["total_receivable"])
-        text += f"{i}. {c['full_name']}\n   📞 {c['phone'] or '-'}\n   💳 بدهی: {debt_str} | طلب: {recv_str}\n\n"
-        
-    # Simple pagination: show first 10
-    lines = text.split("\n\n")
-    if len(lines) > 15:
-        text = "\n\n".join(lines[:15]) + "\n\n..."
-        
-    if len(customers) > 10:
-        text += f"\n📊 مجموع: {len(customers)} مشتری"
-        
-    await message.answer(text, reply_markup=customer_menu())
+    try:
+        user = get_user(message)
+        customers = CustomerRepository.get_by_user(user["id"])
+            
+        if not customers:
+            await message.answer(CUSTOMER_EMPTY, reply_markup=customer_menu())
+            return
+            
+        text = "👤 لیست مشتریان:\n\n"
+        for i, c in enumerate(customers, 1):
+            debt_str = format_amount(c["total_debt"])
+            recv_str = format_amount(c["total_receivable"])
+            text += f"{i}. {c['full_name']}\n   📞 {c['phone'] or '-'}\n   💳 بدهی: {debt_str} | طلب: {recv_str}\n\n"
+            
+        # Simple pagination: show first 10
+        lines = text.split("\n\n")
+        if len(lines) > 15:
+            text = "\n\n".join(lines[:15]) + "\n\n..."
+            
+        if len(customers) > 10:
+            text += f"\n📊 مجموع: {len(customers)} مشتری"
+            
+        await message.answer(text, reply_markup=customer_menu())
+    except Exception as e:
+        logger.error(f"Error in customer_list: {e}", exc_info=True)
+        await message.answer(ERROR_GENERAL, reply_markup=customer_menu())
 
 @router.message(F.text == "🔍 جستجوی مشتری")
 async def customer_search_start(message: Message, state: FSMContext):
@@ -8523,6 +8813,7 @@ async def customer_edit_name(message: Message, state: FSMContext):
         await message.answer(CUSTOMER_UPDATED, reply_markup=customer_menu())
     except Exception as e:
         logger.error(f"Error updating customer: {e}")
+        await state.clear()
         await message.answer(ERROR_GENERAL)
 
 @router.message(F.text == "🗑 حذف مشتری")
@@ -8752,7 +9043,7 @@ async def search_query(message: Message, state: FSMContext):
     await state.set_state(SearchForm.transaction_type)
     await message.answer("نوع تراکنش را انتخاب کنید:", reply_markup=transaction_type_keyboard())
 
-@router.callback_query(F.data.in_(["search_type_income", "search_type_expense", "search_type_debt", "search_type_receivable", "search_type_all"]))
+@router.callback_query(SearchForm.transaction_type, F.data.in_(["search_type_income", "search_type_expense", "search_type_debt", "search_type_receivable", "search_type_all"]))
 async def search_type_selected(callback: CallbackQuery, state: FSMContext):
     """Process search type filter."""
     data = await state.get_data()
@@ -10721,6 +11012,7 @@ async def card_confirm(callback: CallbackQuery, state: FSMContext):
             logger.info(f"Card info saved: {data['name']} by user {user["telegram_id"]}")
         except Exception as e:
             logger.error(f"Error saving card info: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()
@@ -11075,6 +11367,7 @@ async def card_edit_confirm(callback: CallbackQuery, state: FSMContext):
             logger.info(f"Card info updated: ID {card_id} by user {user["telegram_id"]}")
         except Exception as e:
             logger.error(f"Error updating card info: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()
@@ -11149,6 +11442,7 @@ async def card_delete_confirm(callback: CallbackQuery, state: FSMContext):
             logger.info(f"Card info deleted: ID {card_id} by user {user["telegram_id"]}")
         except Exception as e:
             logger.error(f"Error deleting card info: {e}")
+            await state.clear()
             await callback.message.edit_text(ERROR_GENERAL, reply_markup=None)
     else:
         await state.clear()

@@ -339,6 +339,9 @@ class TransactionRepository:
     @staticmethod
     def delete(txn_id: int) -> bool:
         transactions = get_collection("transactions")
+        payments = get_collection("payments")
+        # Delete associated payments first
+        payments.delete_many({"transaction_id": txn_id})
         result = transactions.delete_one({"id": txn_id})
         return result.deleted_count > 0
 
@@ -456,6 +459,24 @@ class CustomerRepository:
     @staticmethod
     def delete(customer_id: int) -> bool:
         customers = get_collection("customers")
+        transactions = get_collection("transactions")
+        payments = get_collection("payments")
+        cards = get_collection("card_info")
+
+        # Find all transactions linked to this customer
+        txn_ids = [t["id"] for t in transactions.find({"customer_id": customer_id}, {"id": 1})]
+
+        # Delete payments for those transactions
+        if txn_ids:
+            payments.delete_many({"transaction_id": {"$in": txn_ids}})
+
+        # Delete transactions
+        transactions.delete_many({"customer_id": customer_id})
+
+        # Delete cards linked to this customer
+        cards.delete_many({"customer_id": customer_id})
+
+        # Delete the customer
         result = customers.delete_one({"id": customer_id})
         return result.deleted_count > 0
 

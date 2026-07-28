@@ -1,9 +1,8 @@
 """Backup service for MongoDB database export/import with media support.
 
-Supports cross-bot restore: a backup from one installation can be restored
-into another installation of the same bot. Photo paths are normalized to
-relative paths during backup and remapped to the new installation's paths
-during restore.
+The backup format is versioned and tied to the current bot version.
+Only the current backup format (v3.0) is supported — legacy format
+compatibility has been removed.
 """
 
 import os
@@ -13,7 +12,7 @@ import uuid
 import zipfile
 import shutil
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.config import settings
 from app.utils.logger import logger
@@ -49,15 +48,7 @@ PHOTO_PATH_COLLECTIONS = {
     "payments": ["photo_path"],
 }
 
-BACKUP_VERSION = "2.1"
-BACKUP_VERSION_TUPLE = (2, 1)
-
-
-def _parse_version(version_str: str) -> tuple:
-    try:
-        return tuple(int(p) for p in version_str.split("."))
-    except (ValueError, TypeError):
-        return (0, 0)
+BACKUP_VERSION = "3.0"
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -286,17 +277,18 @@ def validate_uploaded_backup(filepath: str) -> Dict:
             result["metadata"] = metadata
             namelist = zf.namelist()
 
-            # Version check (semantic, not lexicographic)
-            version = metadata.get("version", "1.0")
-            if _parse_version(version) < (2, 0):
-                result["warnings"].append(f"نسخه قدیمی ({version}). ممکن است برخی داده‌ها بازیابی نشوند.")
+            # Version compatibility check
+            backup_version = metadata.get("version", "unknown")
+            if backup_version != BACKUP_VERSION:
+                result["errors"].append(
+                    f"نسخه پشتیبان ({backup_version}) با نسخه فعلی ({BACKUP_VERSION}) سازگار نیست"
+                )
+                return result
 
             # Verify each collection file
             total_docs = 0
             for coll_name in metadata.get("collections", []):
                 coll_file = f"db/{coll_name}.json"
-                if coll_file not in namelist:
-                    coll_file = f"{coll_name}.json"
                 if coll_file not in namelist:
                     result["errors"].append(f"فایل {coll_file} یافت نشد")
                     continue
@@ -322,8 +314,6 @@ def validate_uploaded_backup(filepath: str) -> Dict:
             # Check if photo_path references in transactions/payments exist in media/
             for coll_name in ["transactions", "payments"]:
                 coll_file = f"db/{coll_name}.json"
-                if coll_file not in namelist:
-                    coll_file = f"{coll_name}.json"
                 if coll_file in namelist:
                     try:
                         docs = json.loads(zf.read(coll_file))
@@ -366,7 +356,7 @@ def create_full_backup() -> Dict:
 
     with zipfile.ZipFile(filepath, "w", zipfile.ZIP_DEFLATED) as zf:
         metadata = {
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "jalali_date": get_jalali_date(),
             "jalali_time": get_jalali_time(),
             "database": settings.MONGO_DB_NAME,
@@ -375,7 +365,6 @@ def create_full_backup() -> Dict:
             "total_documents": total_docs,
             "has_media": True,
             "version": BACKUP_VERSION,
-            "paths_normalized": True,
         }
         zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, cls=JSONEncoder))
 
@@ -410,7 +399,7 @@ def create_db_backup() -> Dict:
 
     with zipfile.ZipFile(filepath, "w", zipfile.ZIP_DEFLATED) as zf:
         metadata = {
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "jalali_date": get_jalali_date(),
             "jalali_time": get_jalali_time(),
             "database": settings.MONGO_DB_NAME,
@@ -419,7 +408,6 @@ def create_db_backup() -> Dict:
             "total_documents": total_docs,
             "has_media": False,
             "version": BACKUP_VERSION,
-            "paths_normalized": True,
         }
         zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, cls=JSONEncoder))
 
@@ -446,7 +434,7 @@ def create_media_backup() -> Dict:
 
     with zipfile.ZipFile(filepath, "w", zipfile.ZIP_DEFLATED) as zf:
         metadata = {
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "jalali_date": get_jalali_date(),
             "jalali_time": get_jalali_time(),
             "backup_type": "media",
@@ -508,8 +496,6 @@ def verify_backup_integrity(filepath: str) -> Dict:
             total_docs = 0
             for coll_name in metadata.get("collections", []):
                 coll_file = f"db/{coll_name}.json"
-                if coll_file not in namelist:
-                    coll_file = f"{coll_name}.json"
                 if coll_file not in namelist:
                     result["errors"].append(f"فایل {coll_file} یافت نشد")
                     continue
@@ -630,7 +616,6 @@ def restore_from_backup(filepath: str, drop_existing: bool = False,
     - ISO date strings are converted back to datetime objects
     - Indexes are recreated after restore
     - Counter sequences are updated to prevent ID collisions
-    - Backups collection is skipped during cross-bot restore (file references invalid)
     - Post-restore verification checks data integrity
     
     Args:
@@ -638,7 +623,6 @@ def restore_from_backup(filepath: str, drop_existing: bool = False,
         drop_existing: If True, drop existing collections before restore
         remap_paths: If True, remap relative photo paths to current installation
         new_telegram_id: If set, update user records with this telegram_id
-        progress_callback: Optional async callback for progress updates (message, pct)
     """
     from app.database.models import get_database
 
@@ -673,22 +657,15 @@ def restore_from_backup(filepath: str, drop_existing: bool = False,
             metadata = json.loads(zf.read("metadata.json"))
             collections = metadata.get("collections", [])
             namelist = zf.namelist()
-            paths_are_relative = metadata.get("paths_normalized", False)
             is_cross_bot = new_telegram_id is not None
 
-            # Version compatibility check (semantic, not lexicographic)
-            backup_version = metadata.get("version", "1.0")
-            if _parse_version(backup_version) < (2, 0):
-                if is_cross_bot:
-                    result["errors"].append(
-                        f"نسخه پشتیبان قدیمی است ({backup_version}). "
-                        "بازیابی در ربات دیگر پشتیبانی نمی‌شود."
-                    )
-                    return result
-                result["warnings"].append(
-                    f"نسخه پشتیبان قدیمی است ({backup_version}). "
-                    "ممکن است برخی داده‌ها بازیابی نشوند."
+            # Version compatibility check
+            backup_version = metadata.get("version", "unknown")
+            if backup_version != BACKUP_VERSION:
+                result["errors"].append(
+                    f"نسخه پشتیبان ({backup_version}) با نسخه فعلی ({BACKUP_VERSION}) سازگار نیست"
                 )
+                return result
             
             # Validate collection names
             valid_collections = {"users", "transactions", "payments", "customers", 
@@ -697,13 +674,10 @@ def restore_from_backup(filepath: str, drop_existing: bool = False,
                 if coll_name not in valid_collections:
                     result["warnings"].append(f"مجموعه ناشناخته: {coll_name}")
 
-            total_collections = len(collections)
-            
             # When dropping existing data, drop ALL application collections first
-            # to ensure a clean state (handles collections that may not be in the backup)
             if drop_existing:
                 all_app_collections = ["users", "transactions", "payments", "customers",
-                                      "card_info", "reminders", "backups", "counters"]
+                                       "card_info", "reminders", "backups", "counters"]
                 for coll_name in all_app_collections:
                     try:
                         db[coll_name].drop()
@@ -714,18 +688,11 @@ def restore_from_backup(filepath: str, drop_existing: bool = False,
             restored_collections = {}
             
             for idx, coll_name in enumerate(collections):
-                # Skip backups collection during cross-bot restore (file references invalid)
-                if coll_name == "backups" and is_cross_bot:
-                    result["warnings"].append("مجموعه backups رد شد (ارجاعات فایل نامعتبر)")
-                    continue
-                
                 # Skip counters collection - will be rebuilt from max IDs after restore
                 if coll_name == "counters":
                     continue
                 
                 coll_file = f"db/{coll_name}.json"
-                if coll_file not in namelist:
-                    coll_file = f"{coll_name}.json"
                 if coll_file not in namelist:
                     result["errors"].append(f"فایل {coll_file} یافت نشد")
                     continue
@@ -746,8 +713,8 @@ def restore_from_backup(filepath: str, drop_existing: bool = False,
                             # Convert ISO date strings back to datetime objects
                             doc = _convert_iso_strings_to_datetime(doc, coll_name)
                             
-                            # Remap photo paths for cross-bot restore
-                            if remap_paths and paths_are_relative:
+                            # Remap photo paths to current installation's paths
+                            if remap_paths:
                                 doc = _remap_doc_paths(doc, coll_name)
 
                         try:
@@ -1122,7 +1089,7 @@ def delete_backup_file(filepath: str) -> bool:
     return False
 
 
-def cleanup_old_backups(keep_count: int = 10) -> int:
+def cleanup_old_backups(keep_count: int = 5) -> int:
     """Delete old backup files, keeping the most recent ones.
     Also removes orphan DB records for deleted files."""
     from app.database.repository import BackupRepository
