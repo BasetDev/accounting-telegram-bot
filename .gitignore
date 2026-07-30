@@ -4,38 +4,52 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+*.egg
 
 # Database
 data/
 *.db
+*.sqlite
+*.sqlite3
 
-# Environment
+# Environment (NEVER commit real .env)
 .env
+.env.local
+.env.production
+.env.docker
 
 # Logs
 logs/
+*.log
 
 # Backups
 backups/
+*.zip
 
 # Exports
 exports/
+*.xlsx
+*.pdf
 
 # Uploads
 uploads/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Docker
-.env.docker
+desktop.ini
 
 # Virtual Environment
 venv/
@@ -44,11 +58,20 @@ env/
 
 # Runtime
 *.pid
-bot.log
-bot_test.log
+*.pid.lock
+
+# Temp files
+*.tmp
+*.temp
+*.bak
+Untitled-*
 
 # Windows Zone Identifier files
 *:Zone.Identifier
 
-# Temp files
-Untitled-1
+# Docker
+.env.docker
+docker-compose.override.yml
+
+# Railway
+.railway/

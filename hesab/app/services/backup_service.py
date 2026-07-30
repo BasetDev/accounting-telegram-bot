@@ -91,8 +91,8 @@ def _normalize_photo_path(photo_path: str) -> str:
     """Convert an absolute photo path to a relative path (just the filename).
     
     Example:
-        /home/bac/New folder/New/hesab/uploads/your_telegram_user_id_here_14050503_162525.jpg
-        -> your_telegram_user_id_here_14050503_162525.jpg
+        /path/to/uploads/1234567890_14050503_162525.jpg
+        -> 1234567890_14050503_162525.jpg
     """
     if not photo_path:
         return photo_path
@@ -104,8 +104,8 @@ def _resolve_photo_path(relative_path: str) -> str:
     """Resolve a relative photo path to the current installation's absolute path.
     
     Example:
-        your_telegram_user_id_here_14050503_162525.jpg
-        -> /home/bac/New folder/New/hesab/uploads/your_telegram_user_id_here_14050503_162525.jpg
+        1234567890_14050503_162525.jpg
+        -> /path/to/uploads/1234567890_14050503_162525.jpg
     """
     if not relative_path:
         return relative_path

@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pymongo.collection import Collection
 from pymongo import DESCENDING, ASCENDING
 
+import os
+
 from app.database.models import (
     get_collection, get_next_sequence,
     create_user_doc, create_transaction_doc, create_customer_doc,
@@ -12,6 +14,22 @@ from app.database.models import (
     create_payment_doc, _utcnow
 )
 from app.utils.logger import logger
+
+
+def _cleanup_photo_file(photo_path: str) -> None:
+    """Delete a photo file from disk if it exists.
+
+    Silently ignores missing files and deletion errors to avoid
+    blocking database operations.
+    """
+    if not photo_path:
+        return
+    try:
+        if os.path.isfile(photo_path):
+            os.remove(photo_path)
+            logger.info(f"Cleaned up photo file: {photo_path}")
+    except OSError as e:
+        logger.warning(f"Failed to delete photo file {photo_path}: {e}")
 
 
 class UserRepository:
@@ -340,9 +358,27 @@ class TransactionRepository:
     def delete(txn_id: int) -> bool:
         transactions = get_collection("transactions")
         payments = get_collection("payments")
+
+        # Collect photo paths before deletion for filesystem cleanup
+        txn = transactions.find_one({"id": txn_id}, {"photo_path": 1})
+        txn_photo = txn.get("photo_path") if txn else None
+
+        payment_photos = []
+        for pay in payments.find({"transaction_id": txn_id}, {"photo_path": 1}):
+            pp = pay.get("photo_path")
+            if pp:
+                payment_photos.append(pp)
+
         # Delete associated payments first
         payments.delete_many({"transaction_id": txn_id})
         result = transactions.delete_one({"id": txn_id})
+
+        # Clean up photo files from filesystem
+        if result.deleted_count > 0:
+            _cleanup_photo_file(txn_photo)
+            for pp in payment_photos:
+                _cleanup_photo_file(pp)
+
         return result.deleted_count > 0
 
     @staticmethod
@@ -466,6 +502,20 @@ class CustomerRepository:
         # Find all transactions linked to this customer
         txn_ids = [t["id"] for t in transactions.find({"customer_id": customer_id}, {"id": 1})]
 
+        # Collect photo paths before deletion for filesystem cleanup
+        photo_paths_to_cleanup = []
+        if txn_ids:
+            # Transaction photos
+            for txn in transactions.find({"customer_id": customer_id}, {"photo_path": 1}):
+                pp = txn.get("photo_path")
+                if pp:
+                    photo_paths_to_cleanup.append(pp)
+            # Payment photos for those transactions
+            for pay in payments.find({"transaction_id": {"$in": txn_ids}}, {"photo_path": 1}):
+                pp = pay.get("photo_path")
+                if pp:
+                    photo_paths_to_cleanup.append(pp)
+
         # Delete payments for those transactions
         if txn_ids:
             payments.delete_many({"transaction_id": {"$in": txn_ids}})
@@ -478,6 +528,12 @@ class CustomerRepository:
 
         # Delete the customer
         result = customers.delete_one({"id": customer_id})
+
+        # Clean up photo files from filesystem
+        if result.deleted_count > 0:
+            for pp in photo_paths_to_cleanup:
+                _cleanup_photo_file(pp)
+
         return result.deleted_count > 0
 
     @staticmethod

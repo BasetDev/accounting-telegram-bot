@@ -3988,6 +3988,12 @@ async def debt_report_export(callback: CallbackQuery):
         )
         await safe_delete(callback.message)
 
+        # Clean up the generated export file after sending
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
     except Exception as e:
         logger.error(f"Debt report export error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
@@ -7914,6 +7920,12 @@ async def recv_report_export(callback: CallbackQuery):
         )
         await safe_delete(callback.message)
 
+        # Clean up the generated export file after sending
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
     except Exception as e:
         logger.error(f"Receivable report export error: {e}")
         await callback.message.edit_text(ERROR_GENERAL)
@@ -9013,6 +9025,12 @@ async def handle_export(callback: CallbackQuery):
             caption=f"📊 گزارش تراکنش‌های مالی - {get_jalali_date()} ساعت {get_jalali_time()}"
         )
         await safe_delete(callback.message)
+
+        # Clean up the generated export file after sending
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
         
     except Exception as e:
         logger.error(f"Export error: {e}")
@@ -9133,7 +9151,7 @@ async def backup_create_full(callback: CallbackQuery):
             return
 
         from app.services.backup_service import create_full_backup
-        result = create_full_backup()
+        result = await asyncio.to_thread(create_full_backup)
 
         # Record in database
         BackupRepository.create(
@@ -9162,6 +9180,12 @@ async def backup_create_full(callback: CallbackQuery):
             caption=f"💾 پشتیبان کامل | {get_jalali_date()} ساعت {get_jalali_time()}"
         )
 
+        # Clean up the backup file from disk after sending
+        try:
+            os.remove(result["filepath"])
+        except OSError:
+            pass
+
     except Exception as e:
         logger.error(f"Full backup error: {e}")
         await callback.message.edit_text(BACKUP_ERROR)
@@ -9182,7 +9206,7 @@ async def backup_create_media(callback: CallbackQuery):
             return
 
         from app.services.backup_service import create_media_backup
-        result = create_media_backup()
+        result = await asyncio.to_thread(create_media_backup)
 
         # Record in database
         BackupRepository.create(
@@ -9208,6 +9232,12 @@ async def backup_create_media(callback: CallbackQuery):
             document,
             caption=f"💾 پشتیبان رسانه | {get_jalali_date()} ساعت {get_jalali_time()}"
         )
+
+        # Clean up the backup file from disk after sending
+        try:
+            os.remove(result["filepath"])
+        except OSError:
+            pass
 
     except Exception as e:
         logger.error(f"Media backup error: {e}")
@@ -9385,9 +9415,10 @@ async def backup_upload_restore_confirm(callback: CallbackQuery, state: FSMConte
         new_telegram_id = callback.from_user.id
         
         from app.services.backup_service import restore_from_backup
-        result = restore_from_backup(
-            temp_path, 
-            drop_existing=True, 
+        result = await asyncio.to_thread(
+            restore_from_backup,
+            temp_path,
+            drop_existing=True,
             remap_paths=True,
             new_telegram_id=new_telegram_id
         )
@@ -9456,7 +9487,7 @@ async def backup_create_db(callback: CallbackQuery):
             return
 
         from app.services.backup_service import create_db_backup
-        result = create_db_backup()
+        result = await asyncio.to_thread(create_db_backup)
 
         # Record in database
         BackupRepository.create(
@@ -9483,6 +9514,12 @@ async def backup_create_db(callback: CallbackQuery):
             document,
             caption=f"💾 پشتیبان دیتابیس | {get_jalali_date()} ساعت {get_jalali_time()}"
         )
+
+        # Clean up the backup file from disk after sending
+        try:
+            os.remove(result["filepath"])
+        except OSError:
+            pass
 
     except Exception as e:
         logger.error(f"DB backup error: {e}")
@@ -9698,8 +9735,9 @@ async def backup_restore_confirm(callback: CallbackQuery):
             return
 
         # Always pass new_telegram_id so restored data is merged to the current user
-        result = restore_from_backup(
-            filepath, 
+        result = await asyncio.to_thread(
+            restore_from_backup,
+            filepath,
             drop_existing=True,
             remap_paths=True,
             new_telegram_id=callback.from_user.id

@@ -51,10 +51,11 @@ def init_database():
                 socketTimeoutMS=30000,
                 maxPoolSize=50,
                 minPoolSize=2,
+                maxIdleTimeMS=60000,
                 retryWrites=True,
                 retryReads=True,
                 w='majority',
-                directConnection=False
+                directConnection=False,
             )
             _db = _client[settings.MONGO_DB_NAME]
 

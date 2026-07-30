@@ -7,7 +7,7 @@
 
 ## 1. Project Overview
 
-**Hesab** (Persian: حساب, meaning "account/calculation") is a Telegram bot for small-business financial management. It is written in **Python 3.13+** using the **aiogram 3.10** framework and **SQLAlchemy 2.0** ORM with a **SQLite** database. The bot manages income, expenses, debts, receivables, customers, bank cards/IBANs, and generates Excel/PDF reports — all through an interactive Telegram interface using Persian (Farsi) language.
+**Hesab** (Persian: حساب, meaning "account/calculation") is a Telegram bot for small-business financial management. It is written in **Python 3.13+** using the **aiogram 3.10** framework and **MongoDB** (via **pymongo**). The bot manages income, expenses, debts, receivables, customers, bank cards/IBANs, and generates Excel/PDF reports — all through an interactive Telegram interface using Persian (Farsi) language.
 
 ---
 
@@ -201,11 +201,11 @@ The application follows a modular layered architecture:
 
 ### 5.1 Database Engine
 
-- **Type:** SQLite via SQLAlchemy 2.0+
-- **File:** `data/hesab.db`
-- **Connection URL:** `sqlite:///data/hesab.db`
-- **Pragma:** `check_same_thread=False`, `StaticPool`
-- **Migration:** Auto-migration via `init_database()` which issues `ALTER TABLE` for missing columns.
+- **Type:** MongoDB (via pymongo)
+- **Connection URI:** Configured via `MONGO_URI` environment variable
+- **Database Name:** Configured via `MONGO_DB_NAME` (default: `hesab`)
+- **Indexes:** Auto-created by `init_database()` on startup
+- **ID Generation:** Auto-increment via `counters` collection
 
 ### 5.2 Tables, Columns, and Constraints
 
@@ -528,11 +528,12 @@ A single module-level dictionary `_recv_groups_cache` exists in `main_handler.py
 
 | Variable | Example Value | Purpose |
 |----------|---------------|---------|
-| `BOT_TOKEN` | `your_bot_token_here` | Telegram Bot API token |
+| `BOT_TOKEN` | `your_bot_token_here` | Telegram Bot API token (from @BotFather) |
 | `ADMIN_ID` | `your_telegram_user_id_here` | Telegram user ID with admin access |
 | `ADMIN_USERNAME` | `admin` | Admin username |
-| `DATABASE_URL` | `sqlite:///data/hesab.db` | SQLAlchemy database URL |
-| `APP_NAME` | `📊 حسابداری کسب‌وکار` | Application display name |
+| `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection string |
+| `MONGO_DB_NAME` | `hesab` | MongoDB database name |
+| `APP_NAME` | `Hesab Accounting Bot` | Application display name |
 | `APP_VERSION` | `1.0.0` | Application version |
 | `TIMEZONE` | `Asia/Tehran` | Default timezone |
 | `LANGUAGE` | `fa` | Interface language |
@@ -540,6 +541,7 @@ A single module-level dictionary `_recv_groups_cache` exists in `main_handler.py
 | `LOG_FILE` | `logs/hesab.log` | Log file path |
 | `BACKUP_DIR` | `backups/` | Database backup directory |
 | `EXPORT_DIR` | `exports/` | Report export directory |
+| `UPLOAD_DIR` | `uploads/` | Photo uploads directory |
 
 ### 10.2 Startup Process
 

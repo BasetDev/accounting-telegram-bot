@@ -1,6 +1,7 @@
 """Main entry point for the Hesab Telegram Accounting Bot."""
 
 import asyncio
+import signal
 import sys
 import os
 
@@ -34,6 +35,29 @@ async def set_bot_commands(bot: Bot):
     logger.info("Bot commands registered.")
 
 
+def _cleanup_stale_exports():
+    """Delete export files older than 1 hour from the exports directory."""
+    import time
+    export_dir = settings.EXPORT_DIR
+    if not os.path.isdir(export_dir):
+        return
+    max_age = 3600  # 1 hour in seconds
+    now = time.time()
+    cleaned = 0
+    for fname in os.listdir(export_dir):
+        fpath = os.path.join(export_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            if now - os.path.getmtime(fpath) > max_age:
+                os.remove(fpath)
+                cleaned += 1
+        except OSError:
+            pass
+    if cleaned > 0:
+        logger.info(f"Cleaned up {cleaned} stale export files.")
+
+
 async def main():
     """Initialize and start the bot."""
     # Validate configuration
@@ -50,15 +74,18 @@ async def main():
     for db_attempt in range(3):
         try:
             init_database()
-            logger.info("MongoDB Atlas database initialized.")
+            logger.info("MongoDB database initialized.")
             break
         except Exception as e:
             logger.warning(f"MongoDB attempt {db_attempt + 1}/3 failed: {e}")
             if db_attempt < 2:
                 time.sleep(5)
             else:
-                logger.critical(f"Failed to connect to MongoDB Atlas after 3 attempts: {e}")
+                logger.critical(f"Failed to connect to MongoDB after 3 attempts: {e}")
                 return
+
+    # Clean up stale export files from previous runs
+    _cleanup_stale_exports()
 
     # Initialize bot and dispatcher
     bot = Bot(
@@ -74,6 +101,28 @@ async def main():
     await set_bot_commands(bot)
 
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} started!")
+
+    # Set up signal handlers for graceful shutdown
+    loop = asyncio.get_running_loop()
+
+    async def _shutdown(sig_name: str):
+        """Graceful shutdown handler."""
+        logger.info(f"Received {sig_name}, shutting down gracefully...")
+        await dp.storage.close()
+        close_database()
+        logger.info("Bot stopped and database connection closed.")
+
+    def _signal_handler(sig_name: str):
+        """Signal handler that schedules async shutdown."""
+        logger.info(f"Signal {sig_name} received.")
+        asyncio.ensure_future(_shutdown(sig_name))
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, lambda s=sig: _signal_handler(s.name))
+        except NotImplementedError:
+            # Windows does not support add_signal_handler
+            signal.signal(sig, lambda s, f: _signal_handler(signal.Signals(s).name))
 
     try:
         await dp.start_polling(bot)
