@@ -9,23 +9,38 @@ from pymongo.database import Database
 from pymongo.collection import Collection
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
-from app.config import settings
+from app.config import settings, IS_SERVERLESS
 from app.utils.logger import logger
 
 
 # ==============================
 # MongoDB Connection Manager
 # ==============================
+# Uses lazy singleton pattern for connection reuse across serverless invocations.
 
 _client: Optional[MongoClient] = None
 _db: Optional[Database] = None
+_indexes_created: bool = False
 
 
 def get_database() -> Database:
-    """Get the MongoDB database instance. Initializes connection if needed."""
+    """Get the MongoDB database instance. Initializes connection if needed.
+
+    In serverless environments, reuses existing connections when possible
+    to avoid connection overhead on each invocation.
+    """
     global _client, _db
-    if _db is None:
-        init_database()
+    if _db is not None:
+        # Verify the connection is still alive
+        try:
+            _client.admin.command('ping')
+            return _db
+        except Exception:
+            # Connection died, reset and reinitialize
+            _client = None
+            _db = None
+
+    init_database()
     return _db
 
 
@@ -35,11 +50,22 @@ def get_collection(name: str) -> Collection:
 
 
 def init_database():
-    """Initialize MongoDB connection and create indexes."""
-    global _client, _db
+    """Initialize MongoDB connection and create indexes.
+
+    Connection pool sizes are optimized for serverless:
+    - maxPoolSize=10 (reduced from 50 for serverless)
+    - minPoolSize=0 (no idle connections in serverless)
+    - maxIdleTimeMS=30000 (close idle connections faster)
+    """
+    global _client, _db, _indexes_created
 
     if not settings.MONGO_URI:
         raise ValueError("MONGO_URI is not configured. Please set it in .env file.")
+
+    # Serverless-optimized connection settings
+    pool_size = 10 if IS_SERVERLESS else 50
+    min_pool = 0 if IS_SERVERLESS else 2
+    idle_time = 30000 if IS_SERVERLESS else 60000
 
     max_retries = 3
     for attempt in range(max_retries):
@@ -49,9 +75,9 @@ def init_database():
                 serverSelectionTimeoutMS=15000,
                 connectTimeoutMS=15000,
                 socketTimeoutMS=30000,
-                maxPoolSize=50,
-                minPoolSize=2,
-                maxIdleTimeMS=60000,
+                maxPoolSize=pool_size,
+                minPoolSize=min_pool,
+                maxIdleTimeMS=idle_time,
                 retryWrites=True,
                 retryReads=True,
                 w='majority',
@@ -63,8 +89,10 @@ def init_database():
             _client.admin.command('ping')
             logger.info(f"Connected to MongoDB Atlas: {settings.MONGO_DB_NAME}")
 
-            # Create indexes
-            _create_indexes()
+            # Create indexes only once per process lifecycle
+            if not _indexes_created:
+                _create_indexes()
+                _indexes_created = True
             return  # Success
 
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:

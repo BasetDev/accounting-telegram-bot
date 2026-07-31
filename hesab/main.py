@@ -1,6 +1,7 @@
 """Main entry point for the Hesab Telegram Accounting Bot."""
 
 import asyncio
+import gc
 import signal
 import sys
 import os
@@ -18,6 +19,9 @@ from app.config import settings
 from app.utils.logger import logger
 from app.database.models import init_database, close_database
 from app.handlers.main_handler import router
+
+# Free memory from import-time objects (critical for 256MB servers)
+gc.collect()
 
 
 async def set_bot_commands(bot: Bot):

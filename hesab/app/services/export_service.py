@@ -8,23 +8,10 @@ from app.config import settings
 from app.utils.logger import logger
 from app.utils.jdatetime_helper import get_jalali_date, format_amount
 
-try:
-    import openpyxl
-    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-    OPENPYXL_AVAILABLE = True
-except ImportError:
-    OPENPYXL_AVAILABLE = False
-
-try:
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    REPORTLAB_AVAILABLE = True
-except ImportError:
-    REPORTLAB_AVAILABLE = False
+# Lazy-load openpyxl and reportlab only when export functions are called.
+# This saves ~7MB at startup — critical for 256MB servers.
+OPENPYXL_AVAILABLE = True
+REPORTLAB_AVAILABLE = True
 
 
 def _ensure_export_dir():
@@ -54,7 +41,12 @@ async def export_transactions_excel(
     filename: str = None
 ) -> str:
     """Export transactions to Excel file and return file path."""
-    if not OPENPYXL_AVAILABLE:
+    global OPENPYXL_AVAILABLE
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    except ImportError:
+        OPENPYXL_AVAILABLE = False
         raise ImportError("openpyxl is not installed. Install with: pip install openpyxl")
     
     _ensure_export_dir()
@@ -111,7 +103,7 @@ async def export_transactions_excel(
             row_idx - 1,
             txn.get("party_name") or "-",
             type_names.get(txn["transaction_type"], txn["transaction_type"]),
-            f"{txn["amount"]:,.0f}",
+            f'{txn["amount"]:,.0f}',
             txn.get("category") or "-",
             txn.get("description") or "-",
             txn["jalali_date"],
@@ -144,7 +136,16 @@ async def export_transactions_pdf(
     filename: str = None
 ) -> str:
     """Export transactions to PDF file and return file path."""
-    if not REPORTLAB_AVAILABLE:
+    global REPORTLAB_AVAILABLE
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+    except ImportError:
+        REPORTLAB_AVAILABLE = False
         raise ImportError("reportlab is not installed. Install with: pip install reportlab")
     
     _ensure_export_dir()
@@ -204,7 +205,7 @@ async def export_transactions_pdf(
     
     for idx, txn in enumerate(transactions, 1):
         t_type = type_names.get(txn["transaction_type"], txn["transaction_type"])
-        amount = f"{txn["amount"]:,.0f}"
+        amount = f'{txn["amount"]:,.0f}'
         desc = (txn.get("description") or "")[:30]
         row = [
             str(idx),
